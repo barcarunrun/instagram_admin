@@ -17,11 +17,43 @@
 
 ## テスト環境
 
-（テスト環境のセットアップ）
+- frontend / backend / worker / PostgreSQL / Redis を Docker Compose で起動する
+- backend は PostgreSQL を参照する
+- ローカル DB 初期化は `./scripts/local-db.sh bootstrap` を使用する
+- frontend は既定で backend API を `http://localhost:4000/api` に接続する
+- ポート競合時は `infra/.env` で host 側ポートを変更する
 
 ## テストデータ
 
-（テスト用のサンプルデータ）
+- `05_source_code/infra/seed.sql` を標準の初期データとする
+- seed データには user 1件を含む
+- seed データには instagram account 1件を含む
+- seed データには media assets 3件を含む
+- seed データには content 1件を含む
+- seed データには schedule 1件を含む
+- seed データには posting jobs 2件を含む
+- seed データには audit log 1件を含む
+
+## 最小確認項目
+
+### 起動確認
+
+1. `./scripts/local-stack.sh up` が成功する
+2. `./scripts/local-db.sh bootstrap` が成功する
+3. `curl http://localhost:4000/api/health` が `{"status":"ok"}` を返す
+
+### backend 確認
+
+1. `GET /api/integrations/instagram/status` が seed データを返す
+2. `GET /api/contents` が seed コンテンツを返す
+3. `GET /api/jobs/logs` が posting_jobs の seed データを返す
+4. `GET /api/audit-logs` が audit_logs の seed データを返す
+
+### 開発品質確認
+
+1. backend: `npm run typecheck`
+2. frontend: `npm run typecheck`
+3. worker: `npm run typecheck`
 
 ## テストスケジュール
 
