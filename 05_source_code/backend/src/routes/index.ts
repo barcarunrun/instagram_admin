@@ -1303,12 +1303,18 @@ router.get(
   "/calendar/events",
   asyncHandler(async (request, response) => {
     const range = dashboardRangeSchema.safeParse({
-      from: typeof request.query.from === "string" ? request.query.from : undefined,
+      from:
+        typeof request.query.from === "string" ? request.query.from : undefined,
       to: typeof request.query.to === "string" ? request.query.to : undefined,
     });
 
     if (!range.success) {
-      sendError(response, 400, "invalid_request", range.error.issues[0]?.message);
+      sendError(
+        response,
+        400,
+        "invalid_request",
+        range.error.issues[0]?.message,
+      );
       return;
     }
 
@@ -1320,12 +1326,18 @@ router.get(
   "/dashboard/kpi",
   asyncHandler(async (request, response) => {
     const range = dashboardRangeSchema.safeParse({
-      from: typeof request.query.from === "string" ? request.query.from : undefined,
+      from:
+        typeof request.query.from === "string" ? request.query.from : undefined,
       to: typeof request.query.to === "string" ? request.query.to : undefined,
     });
 
     if (!range.success) {
-      sendError(response, 400, "invalid_request", range.error.issues[0]?.message);
+      sendError(
+        response,
+        400,
+        "invalid_request",
+        range.error.issues[0]?.message,
+      );
       return;
     }
 
@@ -1337,12 +1349,18 @@ router.get(
   "/dashboard/alerts",
   asyncHandler(async (request, response) => {
     const range = dashboardRangeSchema.safeParse({
-      from: typeof request.query.from === "string" ? request.query.from : undefined,
+      from:
+        typeof request.query.from === "string" ? request.query.from : undefined,
       to: typeof request.query.to === "string" ? request.query.to : undefined,
     });
 
     if (!range.success) {
-      sendError(response, 400, "invalid_request", range.error.issues[0]?.message);
+      sendError(
+        response,
+        400,
+        "invalid_request",
+        range.error.issues[0]?.message,
+      );
       return;
     }
 
@@ -1355,12 +1373,18 @@ router.get(
   "/dashboard/summary",
   asyncHandler(async (request, response) => {
     const range = dashboardRangeSchema.safeParse({
-      from: typeof request.query.from === "string" ? request.query.from : undefined,
+      from:
+        typeof request.query.from === "string" ? request.query.from : undefined,
       to: typeof request.query.to === "string" ? request.query.to : undefined,
     });
 
     if (!range.success) {
-      sendError(response, 400, "invalid_request", range.error.issues[0]?.message);
+      sendError(
+        response,
+        400,
+        "invalid_request",
+        range.error.issues[0]?.message,
+      );
       return;
     }
 

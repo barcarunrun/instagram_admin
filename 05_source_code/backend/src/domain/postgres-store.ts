@@ -116,9 +116,10 @@ function toContentConfig(value: unknown): ContentConfig {
   return {};
 }
 
-function normalizeDashboardDateRange(
-  range?: DashboardDateRange,
-): { from?: string; to?: string } {
+function normalizeDashboardDateRange(range?: DashboardDateRange): {
+  from?: string;
+  to?: string;
+} {
   if (!range?.from && !range?.to) {
     return {};
   }
@@ -2246,7 +2247,9 @@ export const store = {
     return this.getScheduleById(id);
   },
 
-  async getCalendarEvents(range?: DashboardDateRange): Promise<CalendarEvent[]> {
+  async getCalendarEvents(
+    range?: DashboardDateRange,
+  ): Promise<CalendarEvent[]> {
     const publishRange = buildPublishAtRangeWhere("s.publish_at", range);
     const result = await pool.query<{
       id: string;
@@ -2339,12 +2342,16 @@ export const store = {
       ),
       weeklyPostCount: Number(scheduleCount.rows[0]?.count ?? 0),
       failedCount: Number(jobRow.failed_count),
-      unexecutedCount: Number(unexecutedCount.rows[0]?.count ?? jobRow.unexecuted_count),
+      unexecutedCount: Number(
+        unexecutedCount.rows[0]?.count ?? jobRow.unexecuted_count,
+      ),
       actionRequiredCount: Number(jobRow.action_required_count),
     };
   },
 
-  async getDashboardAlerts(range?: DashboardDateRange): Promise<DashboardAlert[]> {
+  async getDashboardAlerts(
+    range?: DashboardDateRange,
+  ): Promise<DashboardAlert[]> {
     await refreshExpiredInstagramAccounts();
     const kpi = await this.getDashboardKpi(range);
     const alerts: DashboardAlert[] = [];
@@ -2453,7 +2460,9 @@ export const store = {
     }));
   },
 
-  async getDashboardUnexecuted(range?: DashboardDateRange): Promise<ScheduleItem[]> {
+  async getDashboardUnexecuted(
+    range?: DashboardDateRange,
+  ): Promise<ScheduleItem[]> {
     const publishRange = buildPublishAtRangeWhere("s.publish_at", range);
     const result = await pool.query<ScheduleRow>(
       `
@@ -2479,7 +2488,9 @@ export const store = {
     return result.rows.map(mapScheduleRow);
   },
 
-  async getDashboardSummary(range?: DashboardDateRange): Promise<DashboardSummary> {
+  async getDashboardSummary(
+    range?: DashboardDateRange,
+  ): Promise<DashboardSummary> {
     const [kpi, alerts, failures, unexecuted, reauthorizationAccounts] =
       await Promise.all([
         this.getDashboardKpi(range),

@@ -240,7 +240,8 @@ export function validateContentDraft(
   if (input.contentType === "carousel") {
     const orderedMediaAssetIds = input.contentConfig.orderedMediaAssetIds;
     if (orderedMediaAssetIds && orderedMediaAssetIds.length > 0) {
-      const hasSameCount = orderedMediaAssetIds.length === input.mediaAssetIds.length;
+      const hasSameCount =
+        orderedMediaAssetIds.length === input.mediaAssetIds.length;
       const hasSameItems = orderedMediaAssetIds.every((assetId) =>
         input.mediaAssetIds.includes(assetId),
       );

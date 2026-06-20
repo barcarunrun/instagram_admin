@@ -1,4 +1,9 @@
-import type { ContentConfig, ContentItem, ContentType, MediaAsset } from "./types.js";
+import type {
+  ContentConfig,
+  ContentItem,
+  ContentType,
+  MediaAsset,
+} from "./types.js";
 
 export interface NormalizedContentPayloadAsset {
   mediaAssetId: string;
