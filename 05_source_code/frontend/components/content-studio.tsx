@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { api } from "../lib/api";
 import type {
@@ -166,6 +167,7 @@ export function ContentStudio({
   });
   const [view, setView] = useState<"list" | "edit">("list");
   const [isUploading, setIsUploading] = useState(false);
+  const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedContent =
@@ -230,7 +232,7 @@ export function ContentStudio({
   }
 
   async function refreshMediaAssets() {
-    const result = await api.getMediaAssets();
+    const result = await api.getMediaAssets({ excludeDemo: true });
     setMediaAssets(result.items);
   }
 
@@ -328,6 +330,7 @@ export function ContentStudio({
           ),
         },
       }));
+      setIsAssetLibraryOpen(true);
       setMessage(`${uploadedAssets.length}件のメディアを登録しました。`);
     } catch (error) {
       setMessage(
@@ -481,11 +484,13 @@ export function ContentStudio({
     setScheduleValidation(null);
     setMessage("");
     setPreviewValidation(null);
+    setIsAssetLibraryOpen(false);
     setView("edit");
   }
 
   function openEdit(id: string) {
     setSelectedId(id);
+    setIsAssetLibraryOpen(false);
     setView("edit");
   }
 
@@ -630,7 +635,9 @@ export function ContentStudio({
               <div className="panel-head">
                 <div>
                   <h3>メディア</h3>
-                  <p className="muted">複数ファイルを添付できます</p>
+                  <p className="muted">
+                    複数ファイルを添付できます。既存メディアは必要なときだけ表示します。
+                  </p>
                 </div>
               </div>
               <div className="dropzone">
@@ -680,34 +687,95 @@ export function ContentStudio({
                   </div>
                 </div>
               </div>
-              <div className="asset-grid" style={{ marginTop: 12 }}>
-                {mediaAssets.map((asset) => {
-                  const selected = form.mediaAssetIds.includes(asset.id);
-                  return (
-                    <button
-                      key={asset.id}
-                      type="button"
-                      className="asset-card"
-                      onClick={() => toggleAsset(asset.id)}
-                    >
-                      <div className="asset-card-head">
-                        <div>
-                          <div className="asset-title">{asset.fileName}</div>
-                          <div className="asset-meta">
-                            {asset.mediaType === "video" ? "動画" : "画像"} /{" "}
-                            {asset.mimeType}
+              {selectedAssets.length > 0 ? (
+                <div className="surface-inset" style={{ marginTop: 12 }}>
+                  <div className="panel-head">
+                    <div>
+                      <h3>選択中のメディア</h3>
+                      <p className="muted">現在この投稿に紐づいているメディアです。</p>
+                    </div>
+                  </div>
+                  <div className="meta-list" style={{ marginTop: 10 }}>
+                    {selectedAssets.map((asset) => (
+                      <div key={asset.id} className="meta-item">
+                        <div className="asset-card-head">
+                          <div>
+                            <div className="asset-title">{asset.fileName}</div>
+                            <div className="asset-meta">
+                              {asset.mediaType === "video" ? "動画" : "画像"} / {asset.mimeType}
+                            </div>
                           </div>
+                          <button
+                            type="button"
+                            className="ghost-button compact-button"
+                            onClick={() => toggleAsset(asset.id)}
+                          >
+                            外す
+                          </button>
                         </div>
-                        {selected ? (
-                          <span className="status-pill published">選択中</span>
-                        ) : (
-                          <span className="chip">追加</span>
-                        )}
                       </div>
-                    </button>
-                  );
-                })}
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="button-row" style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => setIsAssetLibraryOpen((current) => !current)}
+                >
+                  {isAssetLibraryOpen ? "既存メディアを隠す" : "既存メディアを表示"}
+                </button>
+                <Link href="/media" className="ghost-button">
+                  メディア管理へ
+                </Link>
               </div>
+
+              {isAssetLibraryOpen ? (
+                <div className="asset-grid" style={{ marginTop: 12 }}>
+                  {mediaAssets.length === 0 ? (
+                    <div className="surface-inset">
+                      <p className="muted">
+                        アップロードしたメディアがここに表示されます。上のエリアからファイルを追加してください。
+                      </p>
+                    </div>
+                  ) : (
+                    mediaAssets.map((asset) => {
+                      const selected = form.mediaAssetIds.includes(asset.id);
+                      return (
+                        <button
+                          key={asset.id}
+                          type="button"
+                          className="asset-card"
+                          onClick={() => toggleAsset(asset.id)}
+                        >
+                          <div className="asset-card-head">
+                            <div>
+                              <div className="asset-title">{asset.fileName}</div>
+                              <div className="asset-meta">
+                                {asset.mediaType === "video" ? "動画" : "画像"} /{" "}
+                                {asset.mimeType}
+                              </div>
+                            </div>
+                            {selected ? (
+                              <span className="status-pill published">選択中</span>
+                            ) : (
+                              <span className="chip">追加</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              ) : (
+                <div className="surface-inset" style={{ marginTop: 12 }}>
+                  <p className="muted">
+                    既存メディアは初期状態で非表示です。必要な場合のみ「既存メディアを表示」を選択してください。
+                  </p>
+                </div>
+              )}
 
               {form.contentType === "carousel" && selectedAssets.length > 0 ? (
                 <div className="surface-inset" style={{ marginTop: 12 }}>
@@ -754,7 +822,7 @@ export function ContentStudio({
                 </div>
               ) : null}
 
-              {form.contentType === "reel" ? (
+              {form.contentType === "reel" && isAssetLibraryOpen ? (
                 <div className="surface-inset" style={{ marginTop: 12 }}>
                   <div className="panel-head">
                     <div>

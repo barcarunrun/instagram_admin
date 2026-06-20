@@ -5,7 +5,7 @@ import { serverApi } from "../../lib/server-api";
 export default async function ContentsPage() {
   const [contents, mediaAssets, integration] = await Promise.all([
     serverApi.getContents(),
-    serverApi.getMediaAssets(),
+    serverApi.getMediaAssets({ excludeDemo: true }),
     serverApi.getIntegrationStatus(),
   ]);
 

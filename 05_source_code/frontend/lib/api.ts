@@ -189,14 +189,46 @@ export const api = {
     });
   },
 
-  getMediaAssets(): Promise<{ items: MediaAsset[] }> {
-    return apiFetch<{ items: MediaAsset[] }>("/media-assets");
+  getMediaAssets(options?: {
+    excludeDemo?: boolean;
+    keyword?: string;
+    mediaType?: MediaAsset["mediaType"] | "all";
+    usedOnly?: boolean;
+  }): Promise<{ items: MediaAsset[] }> {
+    const params = new URLSearchParams();
+
+    if (options?.excludeDemo) {
+      params.set("excludeDemo", "true");
+    }
+
+    if (options?.keyword) {
+      params.set("keyword", options.keyword);
+    }
+
+    if (options?.mediaType && options.mediaType !== "all") {
+      params.set("mediaType", options.mediaType);
+    }
+
+    if (options?.usedOnly) {
+      params.set("usedOnly", "true");
+    }
+
+    const query = params.toString();
+    return apiFetch<{ items: MediaAsset[] }>(
+      query.length > 0 ? `/media-assets?${query}` : "/media-assets",
+    );
   },
 
   uploadMedia(file: File): Promise<MediaAsset> {
     const formData = new FormData();
     formData.append("file", file);
     return uploadFile<MediaAsset>("/media-assets", formData);
+  },
+
+  deleteMediaAsset(id: string): Promise<{ success: true; asset: MediaAsset }> {
+    return apiFetch<{ success: true; asset: MediaAsset }>(`/media-assets/${id}`, {
+      method: "DELETE",
+    });
   },
 
   validateSchedule(payload: {

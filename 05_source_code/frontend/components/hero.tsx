@@ -11,14 +11,14 @@ export function Hero({
 }) {
   return (
     <section className="page-hero">
-      <p className="eyebrow">{eyebrow}</p>
-      <div className="hero-grid">
-        <div>
+      <div className="page-hero-copy">
+        <p className="eyebrow">{eyebrow}</p>
+        <div className="page-hero-text">
           <h2>{title}</h2>
           <p className="muted">{description}</p>
         </div>
-        {actions ? <div className="button-row">{actions}</div> : null}
       </div>
+      {actions ? <div className="button-row page-hero-actions">{actions}</div> : null}
     </section>
   );
 }

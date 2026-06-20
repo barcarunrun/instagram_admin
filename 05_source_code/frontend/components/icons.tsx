@@ -48,6 +48,30 @@ export function ContentIcon() {
   );
 }
 
+export function MediaIcon() {
+  return (
+    <SvgIcon>
+      <rect
+        x="3.5"
+        y="4.5"
+        width="13"
+        height="11"
+        rx="1.8"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path
+        d="m6.2 13 2.5-2.8 2.2 2.2 1.7-1.8 1.2 1.4"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="7.2" cy="8" r="1.1" fill="currentColor" />
+    </SvgIcon>
+  );
+}
+
 export function LinkIcon() {
   return (
     <SvgIcon>

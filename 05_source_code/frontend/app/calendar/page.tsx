@@ -135,7 +135,7 @@ export default async function CalendarPage(props: CalendarPageProps) {
         }
       />
 
-      <div className="button-row">
+      <div className="button-row page-toolbar-row">
         {(["day", "week", "month"] as const).map((view) => (
           <Link
             key={view}

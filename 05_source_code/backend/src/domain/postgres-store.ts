@@ -57,6 +57,13 @@ type MediaRelationRow = {
   media_asset_id: string;
 };
 
+type MediaUsageSummaryRow = {
+  media_asset_id: string;
+  usage_count: string;
+  latest_used_content_id: string | null;
+  latest_used_content_title: string | null;
+};
+
 type ScheduleRow = {
   id: string;
   content_id: string;
@@ -178,6 +185,109 @@ function mapMediaAsset(row: {
     url: row.url,
     createdAt: toIso(row.created_at),
   };
+}
+
+async function getMediaUsageSummaries(
+  assetIds: string[],
+): Promise<Map<string, MediaUsageSummaryRow>> {
+  const usageByAssetId = new Map<string, MediaUsageSummaryRow>();
+
+  if (assetIds.length === 0) {
+    return usageByAssetId;
+  }
+
+  const result = await pool.query<MediaUsageSummaryRow>(
+    `
+      with content_media_usage as (
+        select
+          cma.media_asset_id,
+          c.id as content_id,
+          c.title,
+          c.updated_at,
+          row_number() over (
+            partition by cma.media_asset_id
+            order by c.updated_at desc, c.id desc
+          ) as row_number
+        from content_media_assets cma
+        join contents c on c.id = cma.content_id
+        where cma.media_asset_id = any($1::uuid[])
+      ),
+      cover_media_usage as (
+        select
+          (c.content_config ->> 'coverAssetId')::uuid as media_asset_id,
+          c.id as content_id,
+          c.title,
+          c.updated_at,
+          row_number() over (
+            partition by (c.content_config ->> 'coverAssetId')::uuid
+            order by c.updated_at desc, c.id desc
+          ) as row_number
+        from contents c
+        where (c.content_config ->> 'coverAssetId') is not null
+          and (c.content_config ->> 'coverAssetId') <> ''
+          and (c.content_config ->> 'coverAssetId')::uuid = any($1::uuid[])
+      ),
+      all_usage as (
+        select * from content_media_usage
+        union all
+        select * from cover_media_usage
+      ),
+      usage_totals as (
+        select media_asset_id, count(*)::text as usage_count
+        from all_usage
+        group by media_asset_id
+      ),
+      latest_usage as (
+        select media_asset_id, content_id, title
+        from (
+          select
+            media_asset_id,
+            content_id,
+            title,
+            row_number() over (
+              partition by media_asset_id
+              order by updated_at desc, content_id desc
+            ) as row_number
+          from all_usage
+        ) ranked
+        where row_number = 1
+      )
+      select
+        usage_totals.media_asset_id::text as media_asset_id,
+        usage_totals.usage_count,
+        latest_usage.content_id::text as latest_used_content_id,
+        latest_usage.title as latest_used_content_title
+      from usage_totals
+      left join latest_usage
+        on latest_usage.media_asset_id = usage_totals.media_asset_id
+    `,
+    [assetIds],
+  );
+
+  for (const row of result.rows) {
+    usageByAssetId.set(row.media_asset_id, row);
+  }
+
+  return usageByAssetId;
+}
+
+async function attachMediaUsage(
+  assets: MediaAsset[],
+): Promise<MediaAsset[]> {
+  const usageByAssetId = await getMediaUsageSummaries(assets.map((asset) => asset.id));
+
+  return assets.map((asset) => {
+    const usage = usageByAssetId.get(asset.id);
+    const usageCount = Number(usage?.usage_count ?? "0");
+
+    return {
+      ...asset,
+      usageCount,
+      isUsed: usageCount > 0,
+      latestUsedContentId: usage?.latest_used_content_id ?? undefined,
+      latestUsedContentTitle: usage?.latest_used_content_title ?? undefined,
+    };
+  });
 }
 
 async function resolveActorUserId(
@@ -948,7 +1058,51 @@ export const store = {
     return fetchContentById(id);
   },
 
-  async getMediaAssets(): Promise<MediaAsset[]> {
+  async getMediaAssets(options?: {
+    excludeDemo?: boolean;
+    keyword?: string;
+    mediaType?: MediaAsset["mediaType"];
+    usedOnly?: boolean;
+  }): Promise<MediaAsset[]> {
+    const clauses: string[] = [];
+    const values: Array<string | string[]> = [];
+
+    if (options?.excludeDemo) {
+      clauses.push(
+        "not (storage_key like 'media/%' and (url like 'http://%' or url like 'https://%'))",
+      );
+    }
+
+    if (options?.keyword) {
+      values.push(`%${options.keyword}%`);
+      clauses.push(
+        `(file_name ilike $${values.length} or mime_type ilike $${values.length})`,
+      );
+    }
+
+    if (options?.mediaType) {
+      values.push(options.mediaType);
+      clauses.push(`media_type = $${values.length}`);
+    }
+
+    if (options?.usedOnly) {
+      clauses.push(`(
+        exists (
+          select 1
+          from content_media_assets cma
+          where cma.media_asset_id = media_assets.id
+        )
+        or exists (
+          select 1
+          from contents c
+          where (c.content_config ->> 'coverAssetId') is not null
+            and (c.content_config ->> 'coverAssetId') <> ''
+            and (c.content_config ->> 'coverAssetId')::uuid = media_assets.id
+        )
+      )`);
+    }
+
+    const where = clauses.length > 0 ? `where ${clauses.join(" and ")}` : "";
     const result = await pool.query<{
       id: string;
       file_name: string;
@@ -965,11 +1119,13 @@ export const store = {
         select id, file_name, mime_type, media_type, file_size, width, height,
           duration_seconds, url, created_at
         from media_assets
+        ${where}
         order by created_at desc
       `,
+      values,
     );
 
-    return result.rows.map(mapMediaAsset);
+    return attachMediaUsage(result.rows.map(mapMediaAsset));
   },
 
   async findMediaAssetByStorageKey(
@@ -979,7 +1135,7 @@ export const store = {
   },
 
   async getMediaAssetById(id: string): Promise<MediaAsset | undefined> {
-    const assets = await getMediaAssetsByIds([id]);
+    const assets = await attachMediaUsage(await getMediaAssetsByIds([id]));
     return assets[0];
   },
 
@@ -995,6 +1151,42 @@ export const store = {
     );
 
     return result.rows[0]?.storage_key;
+  },
+
+  async deleteMediaAsset(
+    id: string,
+    actorKey: string = DEFAULT_ACTOR_KEY,
+    options?: { requestId?: string },
+  ): Promise<
+    | { deleted: false; reason: "in_use" | "not_found"; asset?: MediaAsset }
+    | { deleted: true; asset: MediaAsset; storageKey?: string }
+  > {
+    const asset = await this.getMediaAssetById(id);
+
+    if (!asset) {
+      return { deleted: false, reason: "not_found" };
+    }
+
+    if (asset.usageCount && asset.usageCount > 0) {
+      return { deleted: false, reason: "in_use", asset };
+    }
+
+    const storageKey = await this.getMediaAssetStorageKeyById(id);
+
+    await pool.query(`delete from media_assets where id = $1::uuid`, [id]);
+
+    await createAuditLog(
+      "media.deleted",
+      "media_asset",
+      id,
+      {
+        fileName: asset.fileName,
+        requestId: options?.requestId ?? "",
+      },
+      actorKey,
+    );
+
+    return { deleted: true, asset, storageKey };
   },
 
   async createMediaAsset(input: {

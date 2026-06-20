@@ -49,6 +49,7 @@
 | TASK-060               | 一部実装   | 一部実装   | 未確認   | backend に [05_source_code/backend/src/lib/instagram-oauth.test.ts](05_source_code/backend/src/lib/instagram-oauth.test.ts) はあるが、API・Worker 単体テスト拡充は未完。                                                                                    |
 | TASK-061               | 一部実装   | 一部実装   | 未確認   | E2E は連携導線のみ実装済みで、下書き、予約、失敗復旧、通知までは未網羅。                                                                                                                                                                                    |
 | TASK-062 から TASK-064 | 未着手     | 未着手     | 未確認   | 性能検証、監視整理、クラウド移行準備の実施根拠は未確認。                                                                                                                                                                                                    |
+| TASK-065               | 実装済み   | 実装済み   | 未確認   | 専用メディア管理ページ、メディア一覧の利用状況表示、未使用メディア削除、サイドバー導線を追加。backend / frontend の typecheck と lint、Playwright の media-management spec をローカルで確認対象とする。                                                                 |
 
 ## 共通基盤（ローカル開発優先）
 
@@ -210,6 +211,15 @@
    - 担当者: QA
    - 依存タスク: TASK-014, TASK-015
    - 関連テスト: [06_tests/test-cases.md](06_tests/test-cases.md), [06_tests/regression-test.md](06_tests/regression-test.md)
+
+10. **TASK-065**: メディア管理画面UI/API実装
+   - 説明: 専用メディア管理ページを追加し、アップロード済みメディアの検索、利用状況表示、未使用メディア削除を実装する。
+   - 補足: `/media` ページ、`GET /media-assets` の利用状況要約、`DELETE /media-assets/:id`、サイドバー導線、Playwright の管理ページ受入テストを対象とする。
+   - ステータス: 実装済み（2026-06-20、ローカル検証中）
+   - ストーリーポイント: 5
+   - 担当者: Frontend / Backend
+   - 依存タスク: TASK-008, TASK-010, TASK-015
+   - 関連テスト: [06_tests/test-cases.md](06_tests/test-cases.md)
 
 ### 要件 3: 投稿種別別の作成支援
 

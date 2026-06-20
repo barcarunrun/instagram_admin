@@ -78,6 +78,10 @@ export interface MediaAsset {
   durationSeconds?: number;
   url: string;
   createdAt: string;
+  usageCount?: number;
+  isUsed?: boolean;
+  latestUsedContentId?: string;
+  latestUsedContentTitle?: string;
 }
 
 export interface ContentVersion {

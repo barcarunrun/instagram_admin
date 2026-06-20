@@ -66,6 +66,7 @@ textarea {
 
 button {
   cursor: pointer;
+  color: inherit;
 }
 
 button:focus-visible,
@@ -237,18 +238,28 @@ a:focus-visible {
 
 .page-hero {
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
   padding-top: 6px;
 }
 
-.hero-grid {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  width: 100%;
+.page-hero-copy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 6px;
+}
+
+.page-hero-text {
+  display: grid;
+  gap: 6px;
+}
+
+.page-hero-actions {
+  flex-shrink: 0;
+  justify-content: flex-end;
+  align-self: flex-end;
 }
 
 .page-hero h2,
@@ -284,6 +295,7 @@ a:focus-visible {
   margin: 0 0 4px;
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .muted {
@@ -471,6 +483,10 @@ a:focus-visible {
   gap: 10px;
 }
 
+.page-toolbar-row {
+  margin-top: -4px;
+}
+
 .filter-bar {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 180px)) auto;
@@ -501,8 +517,7 @@ a:focus-visible {
 .button,
 .secondary-button,
 .ghost-button {
-  min-height: 34px;
-  padding: 0 14px;
+  padding: 4px 14px;
 }
 
 .button {
@@ -638,6 +653,8 @@ a:focus-visible {
 .field input,
 .field select,
 .field textarea,
+.media-filter-grid input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.media-filter-grid select,
 .search-input,
 .filter-select {
   width: 100%;
@@ -647,6 +664,14 @@ a:focus-visible {
   background: #171b20;
   color: var(--text);
   padding: 0 12px;
+}
+
+.field input::placeholder,
+.field textarea::placeholder,
+.media-filter-grid input::placeholder,
+.search-input::placeholder,
+.filter-select::placeholder {
+  color: var(--muted);
 }
 
 .field textarea {
@@ -798,6 +823,7 @@ a:focus-visible {
 .validation-item,
 .meta-item,
 .asset-card,
+.media-preview,
 .dropzone,
 .surface-inset {
   border: 1px solid var(--line);
@@ -812,8 +838,10 @@ a:focus-visible {
 .validation-item,
 .meta-item,
 .asset-card,
+.media-preview,
 .surface-inset {
   padding: 12px;
+  font-size: 14px;
 }
 
 .calendar-board {
@@ -896,6 +924,94 @@ a:focus-visible {
   text-align: center;
 }
 
+.media-library-grid,
+.media-filter-grid,
+.media-detail-grid,
+.media-asset-meta {
+  display: grid;
+  gap: 14px;
+}
+
+.media-library-grid {
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.8fr);
+  align-items: start;
+}
+
+.media-filter-grid {
+  grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(160px, 220px));
+}
+
+.media-asset-card {
+  width: 100%;
+  text-align: left;
+}
+
+.media-asset-card.selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-soft);
+}
+
+.media-preview {
+  display: grid;
+  gap: 10px;
+  min-height: 176px;
+}
+
+.media-preview img,
+.media-preview video {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.media-asset-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.media-meta-value {
+  font-size: 13px;
+  color: var(--muted-strong);
+  margin-top: 4px;
+}
+
+.media-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #232933;
+  border: 1px solid var(--line-strong);
+  color: #dce3ed;
+  font-size: 12px;
+}
+
+.media-summary-chip.used {
+  border-color: rgba(31, 199, 122, 0.28);
+  background: var(--success-soft);
+}
+
+.media-summary-chip.unused {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.media-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.media-empty {
+  min-height: 240px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
 .dropzone-icon {
   width: 40px;
   height: 40px;
@@ -937,6 +1053,14 @@ a:focus-visible {
 .validation-item.error {
   border-color: rgba(255, 93, 93, 0.32);
   background: rgba(255, 93, 93, 0.08);
+}
+
+@media (max-width: 960px) {
+  .media-library-grid,
+  .media-filter-grid,
+  .media-asset-meta {
+    grid-template-columns: 1fr;
+  }
 }
 
 .validation-item.warning {
@@ -1034,13 +1158,16 @@ a:focus-visible {
   }
 
   .page-hero,
-  .hero-grid,
   .chart-panel-head,
   .panel-head,
   .list-head,
   .table-toolbar {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .page-hero-actions {
+    justify-content: flex-start;
   }
 
   .stats-grid {

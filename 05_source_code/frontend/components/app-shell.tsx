@@ -7,6 +7,7 @@ import {
   DashboardIcon,
   LinkIcon,
   LogsIcon,
+  MediaIcon,
 } from "./icons";
 import { TopbarAction } from "./topbar-action";
 
@@ -14,6 +15,7 @@ const navigation = [
   { href: "/dashboard", label: "ダッシュボード", icon: <DashboardIcon /> },
   { href: "/calendar", label: "カレンダー", icon: <CalendarIcon /> },
   { href: "/contents", label: "コンテンツ", icon: <ContentIcon /> },
+  { href: "/media", label: "メディア", icon: <MediaIcon /> },
   { href: "/connect", label: "連携", icon: <LinkIcon /> },
   { href: "/logs", label: "実行ログ", icon: <LogsIcon /> },
 ];

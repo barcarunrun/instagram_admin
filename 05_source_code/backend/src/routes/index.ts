@@ -4,7 +4,7 @@ import {
   type Request,
   type Response,
 } from "express";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import multer from "multer";
 import { fileTypeFromBuffer } from "file-type";
@@ -24,6 +24,7 @@ import { checkDatabaseConnection } from "../lib/db.js";
 import { sendError } from "../lib/errors.js";
 import { extractMediaMetadata } from "../lib/media-metadata.js";
 import {
+  deleteStoredMediaFile,
   getStoredMediaPath,
   writeMediaToLocalStorage,
 } from "../lib/media-storage.js";
@@ -171,6 +172,23 @@ const instagramConnectSchema = z.object({
 
 const instagramTestingExpireSchema = z.object({
   accountId: z.string().min(1).optional(),
+});
+
+const testingMediaAssetSchema = z.object({
+  fileName: z.string().min(1),
+  mimeType: z.string().min(1),
+  mediaType: z.enum(["image", "video"]),
+  fileSize: z.number().int().positive().default(1024),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  durationSeconds: z.number().positive().optional(),
+});
+
+const mediaAssetListQuerySchema = z.object({
+  excludeDemo: z.boolean().default(false),
+  keyword: z.string().trim().optional(),
+  mediaType: z.enum(["image", "video"]).optional(),
+  usedOnly: z.boolean().default(false),
 });
 
 function assertTestingRouteEnabled(response: Response): boolean {
@@ -811,6 +829,48 @@ router.post(
   }),
 );
 
+router.post(
+  "/testing/media-assets",
+  asyncHandler(async (request, response) => {
+    if (!assertTestingRouteEnabled(response)) {
+      return;
+    }
+
+    const result = testingMediaAssetSchema.safeParse(request.body);
+
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "テスト用メディア資産の入力が不正です。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+
+    const extension =
+      path.extname(result.data.fileName).toLowerCase() ||
+      (result.data.mediaType === "video" ? ".mp4" : ".png");
+    const storageKey = `testing/${randomUUID()}${extension}`;
+    const asset = await store.createMediaAsset({
+      storageKey,
+      fileName: result.data.fileName,
+      mimeType: result.data.mimeType,
+      mediaType: result.data.mediaType,
+      fileSize: result.data.fileSize,
+      width: result.data.width,
+      height: result.data.height,
+      durationSeconds: result.data.durationSeconds,
+      url: `/api/testing/media-assets/${storageKey}`,
+    });
+
+    response.status(201).json(asset);
+  }),
+);
+
 router.get(
   "/auth/instagram/oauth-url",
   asyncHandler(async (request, response) => {
@@ -957,8 +1017,77 @@ router.get(
 
 router.get(
   "/media-assets",
-  asyncHandler(async (_request, response) => {
-    response.json({ items: await store.getMediaAssets() });
+  asyncHandler(async (request, response) => {
+    const result = mediaAssetListQuerySchema.safeParse({
+      excludeDemo: request.query.excludeDemo === "true",
+      keyword:
+        typeof request.query.keyword === "string"
+          ? request.query.keyword
+          : undefined,
+      mediaType:
+        request.query.mediaType === "image" || request.query.mediaType === "video"
+          ? request.query.mediaType
+          : undefined,
+      usedOnly: request.query.usedOnly === "true",
+    });
+
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "メディア一覧の検索条件を確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+
+    response.json({ items: await store.getMediaAssets(result.data) });
+  }),
+);
+
+router.delete(
+  "/media-assets/:id",
+  asyncHandler(async (request, response) => {
+    const deleted = await store.deleteMediaAsset(
+      String(request.params.id),
+      request.authUser?.id ?? "user_demo",
+      { requestId: request.requestId },
+    );
+
+    if (!deleted.deleted) {
+      if (deleted.reason === "not_found") {
+        return sendError(
+          response,
+          404,
+          "RESOURCE_NOT_FOUND",
+          "メディア資産が見つかりません。",
+        );
+      }
+
+      return sendError(
+        response,
+        409,
+        "CONFLICT",
+        deleted.asset?.latestUsedContentTitle
+          ? `このメディアは「${deleted.asset.latestUsedContentTitle}」で利用中のため削除できません。`
+          : "このメディアは利用中のため削除できません。",
+        [
+          {
+            field: "mediaAssetId",
+            reason: "asset_in_use",
+          },
+        ],
+      );
+    }
+
+    if (deleted.storageKey) {
+      await deleteStoredMediaFile(deleted.storageKey);
+    }
+
+    response.json({ success: true, asset: deleted.asset });
   }),
 );
 

@@ -69,8 +69,34 @@ export const serverApi = {
     return serverFetch<{ items: ContentItem[] }>("/contents");
   },
 
-  getMediaAssets(): Promise<{ items: MediaAsset[] }> {
-    return serverFetch<{ items: MediaAsset[] }>("/media-assets");
+  getMediaAssets(options?: {
+    excludeDemo?: boolean;
+    keyword?: string;
+    mediaType?: MediaAsset["mediaType"] | "all";
+    usedOnly?: boolean;
+  }): Promise<{ items: MediaAsset[] }> {
+    const params = new URLSearchParams();
+
+    if (options?.excludeDemo) {
+      params.set("excludeDemo", "true");
+    }
+
+    if (options?.keyword) {
+      params.set("keyword", options.keyword);
+    }
+
+    if (options?.mediaType && options.mediaType !== "all") {
+      params.set("mediaType", options.mediaType);
+    }
+
+    if (options?.usedOnly) {
+      params.set("usedOnly", "true");
+    }
+
+    const query = params.toString();
+    return serverFetch<{ items: MediaAsset[] }>(
+      query.length > 0 ? `/media-assets?${query}` : "/media-assets",
+    );
   },
 
   getDashboardKpi(range?: {

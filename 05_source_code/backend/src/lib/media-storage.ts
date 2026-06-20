@@ -1,4 +1,4 @@
-import { mkdir, access, writeFile } from "node:fs/promises";
+import { mkdir, access, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 
@@ -26,4 +26,8 @@ export async function writeMediaToLocalStorage(params: {
 
 export function getStoredMediaPath(storageKey: string): string {
   return toAbsolutePath(storageKey);
+}
+
+export async function deleteStoredMediaFile(storageKey: string): Promise<void> {
+  await rm(toAbsolutePath(storageKey), { force: true });
 }

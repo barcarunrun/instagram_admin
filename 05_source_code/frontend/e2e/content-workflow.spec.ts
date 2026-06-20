@@ -113,33 +113,68 @@ async function ensureActiveInstagramIntegration(
   await connectSelectedAccount(page);
 }
 
-async function getSeededMediaAssets(
+async function createTestingMediaAsset(
   apiContext: APIRequestContext,
+  input: {
+    fileName: string;
+    mimeType: string;
+    mediaType: "image" | "video";
+    width: number;
+    height: number;
+    fileSize?: number;
+    durationSeconds?: number;
+  },
 ): Promise<{
-  imageIds: string[];
-  imageNames: string[];
-  videoIds: string[];
-  videoNames: string[];
+  id: string;
+  fileName: string;
+  mediaType: "image" | "video";
 }> {
-  const response = await apiContext.get("/api/media-assets");
+  const response = await apiContext.post("/api/testing/media-assets", {
+    data: input,
+  });
   expect(response.ok()).toBeTruthy();
-  const body = (await response.json()) as {
-    items: Array<{
-      id: string;
-      fileName: string;
-      mediaType: "image" | "video";
-    }>;
+  return (await response.json()) as {
+    id: string;
+    fileName: string;
+    mediaType: "image" | "video";
   };
+}
 
-  const images = body.items.filter((item) => item.mediaType === "image");
-  const videos = body.items.filter((item) => item.mediaType === "video");
+async function createTestingImageAsset(
+  apiContext: APIRequestContext,
+  namePrefix: string,
+): Promise<{
+  id: string;
+  fileName: string;
+  mediaType: "image" | "video";
+}> {
+  return createTestingMediaAsset(apiContext, {
+    fileName: `${uniqueTitle(namePrefix)}.png`,
+    mimeType: "image/png",
+    mediaType: "image",
+    width: 1080,
+    height: 1350,
+    fileSize: 512000,
+  });
+}
 
-  return {
-    imageIds: images.map((item) => item.id),
-    imageNames: images.map((item) => item.fileName),
-    videoIds: videos.map((item) => item.id),
-    videoNames: videos.map((item) => item.fileName),
-  };
+async function createTestingVideoAsset(
+  apiContext: APIRequestContext,
+  namePrefix: string,
+): Promise<{
+  id: string;
+  fileName: string;
+  mediaType: "image" | "video";
+}> {
+  return createTestingMediaAsset(apiContext, {
+    fileName: `${uniqueTitle(namePrefix)}.mp4`,
+    mimeType: "video/mp4",
+    mediaType: "video",
+    width: 1080,
+    height: 1920,
+    fileSize: 10_240_000,
+    durationSeconds: 22,
+  });
 }
 
 function uniqueTitle(prefix: string): string {
@@ -151,6 +186,10 @@ async function startNewContent(page: Page): Promise<void> {
     .locator("section.page-hero")
     .getByRole("button", { name: "新規投稿作成" })
     .click();
+}
+
+async function openMediaLibrary(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "既存メディアを表示" }).click();
 }
 
 async function createApprovedContent(
@@ -222,20 +261,30 @@ test.describe("TASK-016 Draft content acceptance", () => {
 
   test("TC-202: 動画メディアを使って下書きを保存できる", async ({ page }) => {
     const title = uniqueTitle("video_draft");
-
     await login(page);
-    await page.goto("/contents");
-    await startNewContent(page);
-    await page.getByLabel("投稿名").fill(title);
-    await page.getByLabel("投稿種別").selectOption("video");
-    await page
-      .getByLabel("キャプション")
-      .fill("既存動画アセットを利用した保存テストです");
-    await page.getByRole("button", { name: /reel-teaser\.mp4/ }).click();
-    await page.getByRole("button", { name: "下書きを保存" }).click();
-    await expect(page.getByRole("button", { name: title })).toBeVisible();
-    await page.getByRole("button", { name: title }).click();
-    await expect(page.getByText("0件のエラー / 0件の警告")).toBeVisible();
+    const apiContext = await createAuthedApiContext(page.context());
+
+    try {
+      const videoAsset = await createTestingVideoAsset(apiContext, "video_asset");
+
+      await page.goto("/contents");
+      await startNewContent(page);
+      await openMediaLibrary(page);
+      await page.getByLabel("投稿名").fill(title);
+      await page.getByLabel("投稿種別").selectOption("video");
+      await page
+        .getByLabel("キャプション")
+        .fill("既存動画アセットを利用した保存テストです");
+      await page
+        .getByRole("button", { name: new RegExp(videoAsset.fileName) })
+        .click();
+      await page.getByRole("button", { name: "下書きを保存" }).click();
+      await expect(page.getByRole("button", { name: title })).toBeVisible();
+      await page.getByRole("button", { name: title }).click();
+      await expect(page.getByText("0件のエラー / 0件の警告")).toBeVisible();
+    } finally {
+      await apiContext.dispose();
+    }
   });
 
   test("TC-203: サポート外メディアはエラー表示される", async ({ page }) => {
@@ -303,19 +352,20 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const seededAssets = await getSeededMediaAssets(apiContext);
-      expect(seededAssets.imageNames.length).toBeGreaterThanOrEqual(2);
+      const firstImage = await createTestingImageAsset(apiContext, "carousel_first");
+      const secondImage = await createTestingImageAsset(apiContext, "carousel_second");
 
       await page.goto("/contents");
       await startNewContent(page);
+      await openMediaLibrary(page);
       await page.getByLabel("投稿名").fill(title);
       await page.getByLabel("投稿種別").selectOption("carousel");
       await page.getByLabel("キャプション").fill("カルーセル順序の保存テストです");
       await page
-        .getByRole("button", { name: new RegExp(seededAssets.imageNames[0]) })
+        .getByRole("button", { name: new RegExp(firstImage.fileName) })
         .click();
       await page
-        .getByRole("button", { name: new RegExp(seededAssets.imageNames[1]) })
+        .getByRole("button", { name: new RegExp(secondImage.fileName) })
         .click();
       await page.getByRole("button", { name: "下へ" }).first().click();
       await page.getByRole("button", { name: "下書きを保存" }).click();
@@ -332,8 +382,8 @@ test.describe("TASK-016 Draft content acceptance", () => {
       const created = body.items.find((item) => item.title === title);
       expect(created).toBeDefined();
       expect(created?.contentConfig?.orderedMediaAssetIds).toEqual([
-        seededAssets.imageIds[1],
-        seededAssets.imageIds[0],
+        secondImage.id,
+        firstImage.id,
       ]);
     } finally {
       await apiContext.dispose();
@@ -346,17 +396,17 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const seededAssets = await getSeededMediaAssets(apiContext);
-      expect(seededAssets.videoNames.length).toBeGreaterThanOrEqual(1);
-      expect(seededAssets.imageNames.length).toBeGreaterThanOrEqual(1);
+      const videoAsset = await createTestingVideoAsset(apiContext, "reel_video");
+      const coverAsset = await createTestingImageAsset(apiContext, "reel_cover");
 
       await page.goto("/contents");
       await startNewContent(page);
+      await openMediaLibrary(page);
       await page.getByLabel("投稿名").fill(title);
       await page.getByLabel("投稿種別").selectOption("reel");
       await page.getByLabel("キャプション").fill("リール保存テストです");
       await page
-        .getByRole("button", { name: new RegExp(seededAssets.videoNames[0]) })
+        .getByRole("button", { name: new RegExp(videoAsset.fileName) })
         .click();
       await page.getByRole("button", { name: "下書きを保存" }).click();
       await page.getByRole("button", { name: title }).click();
@@ -364,8 +414,9 @@ test.describe("TASK-016 Draft content acceptance", () => {
         page.getByText("リールではカバー画像を指定してください。"),
       ).toBeVisible();
 
+      await openMediaLibrary(page);
       await page
-        .getByRole("button", { name: new RegExp(seededAssets.imageNames[0]) })
+        .getByRole("button", { name: new RegExp(coverAsset.fileName) })
         .last()
         .click();
       await page.getByRole("button", { name: "下書きを保存" }).click();
@@ -382,17 +433,17 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const seededAssets = await getSeededMediaAssets(apiContext);
-      expect(seededAssets.imageNames.length).toBeGreaterThanOrEqual(1);
+      const imageAsset = await createTestingImageAsset(apiContext, "extension_image");
 
       await page.goto("/contents");
       await startNewContent(page);
+      await openMediaLibrary(page);
       await page.getByLabel("投稿名").fill(title);
       await page.getByLabel("投稿種別").selectOption("extension");
       await page.getByLabel("キャプション").fill("拡張種別の保存テストです");
       await page.getByLabel("拡張テンプレートキー").fill("story_pack_v2");
       await page
-        .getByRole("button", { name: new RegExp(seededAssets.imageNames[0]) })
+        .getByRole("button", { name: new RegExp(imageAsset.fileName) })
         .click();
       await page.getByRole("button", { name: "下書きを保存" }).click();
       await expect(page.getByRole("button", { name: title })).toBeVisible();
@@ -418,11 +469,11 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const seededAssets = await getSeededMediaAssets(apiContext);
+      const imageAsset = await createTestingImageAsset(apiContext, "schedule_image");
       const title = uniqueTitle("scheduled_content");
       await createApprovedContent(apiContext, {
         title,
-        mediaAssetIds: [seededAssets.imageIds[0]],
+        mediaAssetIds: [imageAsset.id],
       });
 
       const future = new Date(Date.now() + 48 * 60 * 60 * 1000)
@@ -449,11 +500,11 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const seededAssets = await getSeededMediaAssets(apiContext);
+      const imageAsset = await createTestingImageAsset(apiContext, "past_schedule_image");
       const title = uniqueTitle("past_schedule");
       await createApprovedContent(apiContext, {
         title,
-        mediaAssetIds: [seededAssets.imageIds[0]],
+        mediaAssetIds: [imageAsset.id],
       });
 
       const past = new Date(Date.now() - 60 * 60 * 1000)
@@ -478,11 +529,11 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const seededAssets = await getSeededMediaAssets(apiContext);
+      const imageAsset = await createTestingImageAsset(apiContext, "duplicate_schedule_image");
       const title = uniqueTitle("duplicate_schedule");
       const content = await createApprovedContent(apiContext, {
         title,
-        mediaAssetIds: [seededAssets.imageIds[0]],
+        mediaAssetIds: [imageAsset.id],
       });
       const publishAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
 
@@ -517,11 +568,11 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const seededAssets = await getSeededMediaAssets(apiContext);
+      const imageAsset = await createTestingImageAsset(apiContext, "cancel_schedule_image");
       const title = uniqueTitle("cancel_schedule");
       const content = await createApprovedContent(apiContext, {
         title,
-        mediaAssetIds: [seededAssets.imageIds[0]],
+        mediaAssetIds: [imageAsset.id],
       });
       await createScheduleViaApi(apiContext, {
         contentId: content.id,
@@ -550,11 +601,11 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const seededAssets = await getSeededMediaAssets(apiContext);
+      const imageAsset = await createTestingImageAsset(apiContext, "update_schedule_image");
       const title = uniqueTitle("update_schedule");
       const content = await createApprovedContent(apiContext, {
         title,
-        mediaAssetIds: [seededAssets.imageIds[0]],
+        mediaAssetIds: [imageAsset.id],
       });
       const initialPublishAt = new Date(
         Date.now() + 24 * 60 * 60 * 1000,
