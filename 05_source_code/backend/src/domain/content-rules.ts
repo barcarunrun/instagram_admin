@@ -1,14 +1,39 @@
-import type { ContentItem, ContentType, MediaAsset, ValidationMessage, ValidationSummary } from "./types.js";
+import type {
+  ContentItem,
+  ContentType,
+  MediaAsset,
+  ValidationMessage,
+  ValidationSummary,
+} from "./types.js";
 
-const limits: Record<ContentType, { minAssets: number; maxAssets: number; allowVideo: boolean; requireDuration?: boolean }> = {
+const limits: Record<
+  ContentType,
+  {
+    minAssets: number;
+    maxAssets: number;
+    allowVideo: boolean;
+    requireDuration?: boolean;
+  }
+> = {
   image: { minAssets: 1, maxAssets: 1, allowVideo: false },
-  video: { minAssets: 1, maxAssets: 1, allowVideo: true, requireDuration: true },
+  video: {
+    minAssets: 1,
+    maxAssets: 1,
+    allowVideo: true,
+    requireDuration: true,
+  },
   carousel: { minAssets: 2, maxAssets: 10, allowVideo: true },
   reel: { minAssets: 1, maxAssets: 1, allowVideo: true, requireDuration: true },
   extension: { minAssets: 1, maxAssets: 10, allowVideo: true },
 };
 
-export function validateContentDraft(input: Pick<ContentItem, "title" | "contentType" | "caption" | "hashtags" | "mediaAssetIds">, assets: MediaAsset[]): ValidationSummary {
+export function validateContentDraft(
+  input: Pick<
+    ContentItem,
+    "title" | "contentType" | "caption" | "hashtags" | "mediaAssetIds"
+  >,
+  assets: MediaAsset[],
+): ValidationSummary {
   const messages: ValidationMessage[] = [];
   const rule = limits[input.contentType];
 
@@ -76,7 +101,12 @@ export function validateContentDraft(input: Pick<ContentItem, "title" | "content
     });
   }
 
-  if (rule.requireDuration && assets.some((asset) => asset.mediaType === "video" && !asset.durationSeconds)) {
+  if (
+    rule.requireDuration &&
+    assets.some(
+      (asset) => asset.mediaType === "video" && !asset.durationSeconds,
+    )
+  ) {
     messages.push({
       field: "mediaAssets",
       reason: "duration_required",
@@ -86,12 +116,15 @@ export function validateContentDraft(input: Pick<ContentItem, "title" | "content
   }
 
   if (input.contentType === "carousel") {
-    const invalidAssets = assets.filter((asset) => asset.mimeType === "image/gif");
+    const invalidAssets = assets.filter(
+      (asset) => asset.mimeType === "image/gif",
+    );
     if (invalidAssets.length > 0) {
       messages.push({
         field: "mediaAssets",
         reason: "carousel_partial_invalid",
-        message: "カルーセル内に規格外メディアがあります。対象メディアを修正してください。",
+        message:
+          "カルーセル内に規格外メディアがあります。対象メディアを修正してください。",
         level: "warning",
       });
     }

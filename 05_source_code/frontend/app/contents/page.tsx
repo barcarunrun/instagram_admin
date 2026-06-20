@@ -11,7 +11,11 @@ export default async function ContentsPage() {
 
   return (
     <AppShell currentPath="/contents">
-      <ContentStudio initialContents={contents.items} mediaAssets={mediaAssets.items} accountId={integration.accountId} />
+      <ContentStudio
+        initialContents={contents.items}
+        mediaAssets={mediaAssets.items}
+        accountId={integration.accountId}
+      />
     </AppShell>
   );
 }

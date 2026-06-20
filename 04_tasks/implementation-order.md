@@ -10,6 +10,7 @@
    - frontend / backend / worker / infra のディレクトリ責務を確定
    - 共通開発環境、CI、Lint、Formatter、環境変数管理を整備
    - PostgreSQL、Redis、通知チャネルのローカル開発手順を確立
+   - ステータス: 完了（2026-06-20）
 
 2. **TASK-002**: 認証・認可基盤実装
    - 管理画面ログインとApplication API認証方式を実装

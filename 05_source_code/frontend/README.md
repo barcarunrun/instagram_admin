@@ -22,11 +22,17 @@ npm install
 cp .env.local.example .env.local
 ```
 
+Docker Compose でまとめて起動する場合は、`05_source_code` 配下で `./scripts/local-stack.sh up` を使います。
+
 `.env.local` では API の接続先を指定できます。
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=http://localhost:4000/api
+SERVER_API_BASE_URL=http://localhost:4000/api
 ```
+
+- `NEXT_PUBLIC_API_BASE_URL`: ブラウザから参照する API URL
+- `SERVER_API_BASE_URL`: Next.js サーバーサイドレンダリング時に参照する API URL
 
 ## 実行コマンド
 

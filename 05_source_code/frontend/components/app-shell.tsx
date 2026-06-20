@@ -10,7 +10,13 @@ const navigation = [
   { href: "/logs", label: "実行ログ", icon: <LogsIcon /> },
 ];
 
-export function AppShell({ children, currentPath }: { children: ReactNode; currentPath: string }) {
+export function AppShell({
+  children,
+  currentPath,
+}: {
+  children: ReactNode;
+  currentPath: string;
+}) {
   return (
     <div className="shell">
       <div className="shell-grid">
@@ -22,7 +28,11 @@ export function AppShell({ children, currentPath }: { children: ReactNode; curre
           <div className="sidebar-section">運用</div>
           <nav className="nav-list">
             {navigation.map((item) => (
-              <Link key={item.href} href={item.href} className={`nav-item ${currentPath === item.href ? "active" : ""}`}>
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`nav-item ${currentPath === item.href ? "active" : ""}`}
+              >
                 <span className="nav-icon">{item.icon}</span>
                 {item.label}
               </Link>

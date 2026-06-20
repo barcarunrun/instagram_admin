@@ -9,10 +9,17 @@ import type {
   ScheduleValidationResult,
 } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api";
+
+const SERVER_API_BASE = process.env.SERVER_API_BASE_URL ?? API_BASE;
+
+function getApiBase(): string {
+  return typeof window === "undefined" ? SERVER_API_BASE : API_BASE;
+}
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${getApiBase()}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -45,7 +52,10 @@ export const api = {
     });
   },
 
-  updateContent(id: string, payload: Partial<ContentItem>): Promise<ContentItem> {
+  updateContent(
+    id: string,
+    payload: Partial<ContentItem>,
+  ): Promise<ContentItem> {
     return apiFetch<ContentItem>(`/contents/${id}`, {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -53,25 +63,39 @@ export const api = {
   },
 
   duplicateContent(id: string): Promise<ContentItem> {
-    return apiFetch<ContentItem>(`/contents/${id}/duplicate`, { method: "POST" });
+    return apiFetch<ContentItem>(`/contents/${id}/duplicate`, {
+      method: "POST",
+    });
   },
 
   validateContent(id: string): Promise<ContentItem["validation"]> {
-    return apiFetch<ContentItem["validation"]>(`/contents/${id}/validate`, { method: "POST" });
+    return apiFetch<ContentItem["validation"]>(`/contents/${id}/validate`, {
+      method: "POST",
+    });
   },
 
   getMediaAssets(): Promise<{ items: MediaAsset[] }> {
     return apiFetch<{ items: MediaAsset[] }>("/media-assets");
   },
 
-  validateSchedule(payload: { contentId: string; publishAt: string; timezone: string; accountId: string }): Promise<ScheduleValidationResult> {
+  validateSchedule(payload: {
+    contentId: string;
+    publishAt: string;
+    timezone: string;
+    accountId: string;
+  }): Promise<ScheduleValidationResult> {
     return apiFetch<ScheduleValidationResult>("/schedules/validate", {
       method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
-  createSchedule(payload: { contentId: string; publishAt: string; timezone: string; accountId: string }) {
+  createSchedule(payload: {
+    contentId: string;
+    publishAt: string;
+    timezone: string;
+    accountId: string;
+  }) {
     return apiFetch("/schedules", {
       method: "POST",
       body: JSON.stringify(payload),

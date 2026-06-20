@@ -6,7 +6,9 @@ export const metadata: Metadata = {
   description: "Instagram運用支援のローカルMVP管理画面",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ja">
       <body>{children}</body>

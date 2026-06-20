@@ -1,6 +1,5 @@
-let sequence = 1000;
+import { randomUUID } from "node:crypto";
 
-export function createId(prefix: string): string {
-  sequence += 1;
-  return `${prefix}_${sequence}`;
+export function createId(_prefix: string): string {
+  return randomUUID();
 }

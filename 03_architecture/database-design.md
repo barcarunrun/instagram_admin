@@ -166,6 +166,18 @@ CREATE TABLE audit_logs (
 - audit_logs(resource_type, resource_id, created_at)
 - instagram_accounts(status, token_expires_at)
 
+## ローカルMVP実装差分
+
+現行のローカルMVP API を PostgreSQL へ接続するため、実装上は以下の補助項目を追加で保持する。
+
+- instagram_accounts: account_name, page_name, permissions, last_checked_at
+- media_assets: file_name, url
+- contents: labels, approval_status, created_by, updated_by
+- posting_jobs: error_message, resolution, executed_at
+- content_versions テーブル: UI のバージョン履歴表示用
+
+これらは [05_source_code/infra/migrations/0002_local_mvp_extensions.sql](05_source_code/infra/migrations/0002_local_mvp_extensions.sql) で migration 管理する。
+
 ## バックアップ戦略
 
 - PostgreSQLは日次フルバックアップ + 5分粒度のポイントインタイムリカバリを前提とする。

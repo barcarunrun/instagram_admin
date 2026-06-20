@@ -1,10 +1,27 @@
-export type IntegrationStatus = "not_connected" | "active" | "expired" | "error" | "reauthorization_required";
+export type IntegrationStatus =
+  | "not_connected"
+  | "active"
+  | "expired"
+  | "error"
+  | "reauthorization_required";
 
-export type ContentStatus = "draft" | "scheduled" | "failed" | "published" | "action_required";
+export type ContentStatus =
+  | "draft"
+  | "scheduled"
+  | "failed"
+  | "published"
+  | "action_required";
 
 export type ContentType = "image" | "video" | "carousel" | "reel" | "extension";
 
-export type JobStatus = "scheduled" | "running" | "success" | "failed" | "retrying" | "action_required" | "reauthorization_required";
+export type JobStatus =
+  | "scheduled"
+  | "running"
+  | "success"
+  | "failed"
+  | "retrying"
+  | "action_required"
+  | "reauthorization_required";
 
 export type ValidationMessageLevel = "info" | "warning" | "error";
 

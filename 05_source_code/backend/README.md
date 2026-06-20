@@ -22,11 +22,15 @@ npm install
 cp .env.example .env
 ```
 
+Docker Compose でまとめて起動する場合は、`05_source_code` 配下で `./scripts/local-stack.sh up` を使います。
+
 `.env` の既定値:
 
 ```env
 PORT=4000
 CORS_ORIGIN=http://localhost:3000
+DATABASE_URL=postgresql://instagram:instagram@localhost:5432/instagram_ops
+REDIS_URL=redis://localhost:6379
 ```
 
 ## 実行コマンド
@@ -70,8 +74,9 @@ npm run typecheck
 
 ## 実装の前提
 
-- データストアは `src/domain/store.ts` のインメモリ実装です。
-- サーバー再起動で作成・更新したデータは初期状態に戻ります。
+- データストアは PostgreSQL を参照する `src/domain/postgres-store.ts` です。
+- `DATABASE_URL` は backend 起動前に到達可能な PostgreSQL を指している必要があります。
+- 初期 migration と seed は `05_source_code` 配下で `./scripts/local-db.sh bootstrap` を実行して投入します。
 - 入力バリデーションは Zod で実施します。
 - エラー応答は `error.code`、`error.message`、`error.details`、`error.requestId` を含む JSON 形式です。
 
@@ -84,10 +89,11 @@ backend/
     routes/
       index.ts            # API ルーティング
     domain/
-      store.ts            # インメモリデータストア
+      postgres-store.ts   # PostgreSQL データストア
       content-rules.ts    # コンテンツバリデーションルール
       types.ts            # ドメイン型定義
     lib/
+      db.ts               # PostgreSQL 接続
       errors.ts           # エラーレスポンス整形
       id.ts               # ID生成
       time.ts             # 日時ユーティリティ
@@ -100,6 +106,13 @@ backend/
 
 - frontend の既定接続先は `http://localhost:4000/api` です。
 - CORS は `CORS_ORIGIN` をカンマ区切りで指定できます。
+
+## Migration / Seed
+
+```bash
+cd /Users/eiichisugiyama/Desktop/job/instagram_development/05_source_code
+./scripts/local-db.sh bootstrap
+```
 
 ## 関連
 

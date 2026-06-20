@@ -26,11 +26,23 @@ export default async function ConnectPage() {
           <h3>接続ステップ</h3>
           <div className="timeline">
             <div className="timeline-item">
-              <div className="button-row"><StatusBadge tone="success">1. 認可開始</StatusBadge><span className="muted"><LinkIcon /></span></div>
-              <p>Facebook OAuth に遷移し、認可成功時に次のステップへ進みます。</p>
+              <div className="button-row">
+                <StatusBadge tone="success">1. 認可開始</StatusBadge>
+                <span className="muted">
+                  <LinkIcon />
+                </span>
+              </div>
+              <p>
+                Facebook OAuth に遷移し、認可成功時に次のステップへ進みます。
+              </p>
             </div>
             <div className="timeline-item">
-              <div className="button-row"><StatusBadge tone="info">2. アカウント選択</StatusBadge><span className="muted"><CheckCircleIcon /></span></div>
+              <div className="button-row">
+                <StatusBadge tone="info">2. アカウント選択</StatusBadge>
+                <span className="muted">
+                  <CheckCircleIcon />
+                </span>
+              </div>
               <p>Instagramアカウント: {integration.accountName}</p>
               <p>Facebookページ: {integration.pageName}</p>
               <div className="button-row" style={{ marginTop: 10 }}>
@@ -38,7 +50,12 @@ export default async function ConnectPage() {
               </div>
             </div>
             <div className="timeline-item">
-              <div className="button-row"><StatusBadge tone="warning">3. 権限確認</StatusBadge><span className="muted"><WarningIcon /></span></div>
+              <div className="button-row">
+                <StatusBadge tone="warning">3. 権限確認</StatusBadge>
+                <span className="muted">
+                  <WarningIcon />
+                </span>
+              </div>
               <p>必要権限: {integration.permissions.join(", ")}</p>
             </div>
           </div>
@@ -51,9 +68,18 @@ export default async function ConnectPage() {
               <div className="failure-item-head">
                 <div>
                   <div className="failure-title">接続ステータス</div>
-                  <div className="failure-meta">最終検証: {new Date(integration.lastCheckedAt).toLocaleString("ja-JP")}</div>
+                  <div className="failure-meta">
+                    最終検証:{" "}
+                    {new Date(integration.lastCheckedAt).toLocaleString(
+                      "ja-JP",
+                    )}
+                  </div>
                 </div>
-                <StatusBadge tone={integration.status === "active" ? "success" : "warning"}>{integration.status}</StatusBadge>
+                <StatusBadge
+                  tone={integration.status === "active" ? "success" : "warning"}
+                >
+                  {integration.status}
+                </StatusBadge>
               </div>
             </div>
             <div className="meta-item">
@@ -66,7 +92,9 @@ export default async function ConnectPage() {
             </div>
             <div className="meta-item">
               <div className="failure-title">トークン期限</div>
-              <div className="failure-meta">{new Date(integration.tokenExpiresAt).toLocaleString("ja-JP")}</div>
+              <div className="failure-meta">
+                {new Date(integration.tokenExpiresAt).toLocaleString("ja-JP")}
+              </div>
             </div>
           </div>
         </aside>

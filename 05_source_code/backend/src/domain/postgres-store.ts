@@ -1,0 +1,1047 @@
+import type { PoolClient } from "pg";
+import { createId } from "../lib/id.js";
+import { pool } from "../lib/db.js";
+import { validateContentDraft } from "./content-rules.js";
+import type {
+  AuditLog,
+  CalendarEvent,
+  ContentItem,
+  ContentStatus,
+  DashboardAlert,
+  DashboardKpi,
+  InstagramIntegration,
+  JobLog,
+  MediaAsset,
+  ValidationSummary,
+} from "./types.js";
+
+const DEFAULT_ACTOR_KEY = "user_demo";
+const EXECUTION_RATE_ALERT_THRESHOLD = 85;
+
+type ContentRow = {
+  id: string;
+  title: string;
+  content_type: ContentItem["contentType"];
+  status: ContentStatus;
+  caption: string;
+  hashtags: string[] | null;
+  validation_summary: ValidationSummary | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+  labels: string[] | null;
+  approval_status: ContentItem["approvalStatus"];
+  created_by: string;
+  updated_by: string;
+};
+
+type ContentVersionRow = {
+  id: string;
+  content_id: string;
+  updated_at: string | Date;
+  updated_by: string;
+  summary: string;
+};
+
+type MediaRelationRow = {
+  content_id: string;
+  media_asset_id: string;
+};
+
+function toIso(value: string | Date | null | undefined): string {
+  if (!value) {
+    return new Date().toISOString();
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+function toValidationSummary(value: unknown): ValidationSummary {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "valid" in value &&
+    "messages" in value
+  ) {
+    return value as ValidationSummary;
+  }
+
+  return { valid: false, messages: [] };
+}
+
+function mapMediaAsset(row: {
+  id: string;
+  file_name: string;
+  mime_type: string;
+  media_type: "image" | "video";
+  file_size: number;
+  width: number;
+  height: number;
+  duration_seconds: number | null;
+  url: string;
+  created_at: string | Date;
+}): MediaAsset {
+  return {
+    id: row.id,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    mediaType: row.media_type,
+    fileSize: row.file_size,
+    width: row.width,
+    height: row.height,
+    durationSeconds: row.duration_seconds ?? undefined,
+    url: row.url,
+    createdAt: toIso(row.created_at),
+  };
+}
+
+async function resolveActorUserId(
+  actorKey: string = DEFAULT_ACTOR_KEY,
+  client?: PoolClient,
+): Promise<string> {
+  const executor = client ?? pool;
+  const result = await executor.query<{ id: string }>(
+    `
+      select id
+      from users
+      where name = $1 or email = $1 or id::text = $1
+      order by created_at asc
+      limit 1
+    `,
+    [actorKey],
+  );
+  const row = result.rows[0];
+
+  if (!row) {
+    throw new Error(`Actor not found for key: ${actorKey}`);
+  }
+
+  return row.id;
+}
+
+async function getMediaAssetsByIds(assetIds: string[]): Promise<MediaAsset[]> {
+  if (assetIds.length === 0) {
+    return [];
+  }
+
+  const result = await pool.query<{
+    id: string;
+    file_name: string;
+    mime_type: string;
+    media_type: "image" | "video";
+    file_size: number;
+    width: number;
+    height: number;
+    duration_seconds: number | null;
+    url: string;
+    created_at: string | Date;
+  }>(
+    `
+      select id, file_name, mime_type, media_type, file_size, width, height,
+        duration_seconds, url, created_at
+      from media_assets
+      where id = any($1::uuid[])
+    `,
+    [assetIds],
+  );
+
+  return result.rows.map(mapMediaAsset);
+}
+
+async function getContentRelations(contentIds: string[]): Promise<{
+  mediaIdsByContent: Map<string, string[]>;
+  versionsByContent: Map<string, ContentItem["versions"]>;
+}> {
+  const mediaIdsByContent = new Map<string, string[]>();
+  const versionsByContent = new Map<string, ContentItem["versions"]>();
+
+  if (contentIds.length === 0) {
+    return { mediaIdsByContent, versionsByContent };
+  }
+
+  const [mediaRows, versionRows] = await Promise.all([
+    pool.query<MediaRelationRow>(
+      `
+        select content_id, media_asset_id
+        from content_media_assets
+        where content_id = any($1::uuid[])
+        order by display_order asc
+      `,
+      [contentIds],
+    ),
+    pool.query<ContentVersionRow>(
+      `
+        select id, content_id, updated_at, updated_by, summary
+        from content_versions
+        where content_id = any($1::uuid[])
+        order by updated_at desc
+      `,
+      [contentIds],
+    ),
+  ]);
+
+  for (const row of mediaRows.rows) {
+    const current = mediaIdsByContent.get(row.content_id) ?? [];
+    current.push(row.media_asset_id);
+    mediaIdsByContent.set(row.content_id, current);
+  }
+
+  for (const row of versionRows.rows) {
+    const current = versionsByContent.get(row.content_id) ?? [];
+    current.push({
+      id: row.id,
+      updatedAt: toIso(row.updated_at),
+      updatedBy: row.updated_by,
+      summary: row.summary,
+    });
+    versionsByContent.set(row.content_id, current);
+  }
+
+  return { mediaIdsByContent, versionsByContent };
+}
+
+function mapContentRow(
+  row: ContentRow,
+  relations: {
+    mediaIdsByContent: Map<string, string[]>;
+    versionsByContent: Map<string, ContentItem["versions"]>;
+  },
+): ContentItem {
+  return {
+    id: row.id,
+    title: row.title,
+    contentType: row.content_type,
+    status: row.status,
+    caption: row.caption,
+    hashtags: toStringArray(row.hashtags),
+    labels: toStringArray(row.labels),
+    mediaAssetIds: relations.mediaIdsByContent.get(row.id) ?? [],
+    validation: toValidationSummary(row.validation_summary),
+    approvalStatus: row.approval_status,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+    versions: relations.versionsByContent.get(row.id) ?? [],
+  };
+}
+
+async function fetchContents(rows: ContentRow[]): Promise<ContentItem[]> {
+  const relations = await getContentRelations(rows.map((row) => row.id));
+  return rows.map((row) => mapContentRow(row, relations));
+}
+
+async function fetchContentById(id: string): Promise<ContentItem | undefined> {
+  const result = await pool.query<ContentRow>(
+    `
+      select id, title, content_type, status, caption, hashtags,
+        validation_summary, created_at, updated_at, labels,
+        approval_status, created_by, updated_by
+      from contents
+      where id = $1::uuid
+      limit 1
+    `,
+    [id],
+  );
+  const row = result.rows[0];
+
+  if (!row) {
+    return undefined;
+  }
+
+  const [content] = await fetchContents([row]);
+  return content;
+}
+
+async function createAuditLog(
+  action: string,
+  resourceType: string,
+  resourceId: string,
+  metadata: Record<string, string>,
+  actorKey: string = DEFAULT_ACTOR_KEY,
+  client?: PoolClient,
+): Promise<void> {
+  const executor = client ?? pool;
+  const actorUserId = await resolveActorUserId(actorKey, client);
+
+  await executor.query(
+    `
+      insert into audit_logs (
+        id, actor_user_id, action, resource_type, resource_id, metadata, created_at
+      ) values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, current_timestamp)
+    `,
+    [
+      createId("audit"),
+      actorUserId,
+      action,
+      resourceType,
+      resourceId,
+      JSON.stringify(metadata),
+    ],
+  );
+}
+
+export const store = {
+  async getIntegrationStatus(): Promise<InstagramIntegration | undefined> {
+    const result = await pool.query<{
+      id: string;
+      instagram_account_id: string;
+      facebook_page_id: string;
+      account_name: string;
+      page_name: string;
+      status: InstagramIntegration["status"];
+      token_expires_at: string | Date | null;
+      permissions: string[] | null;
+      last_checked_at: string | Date | null;
+    }>(
+      `
+        select id, instagram_account_id, facebook_page_id, account_name,
+          page_name, status, token_expires_at, permissions, last_checked_at
+        from instagram_accounts
+        order by created_at asc
+        limit 1
+      `,
+    );
+    const row = result.rows[0];
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: row.id,
+      accountId: row.instagram_account_id,
+      facebookPageId: row.facebook_page_id,
+      accountName: row.account_name,
+      pageName: row.page_name,
+      status: row.status,
+      tokenExpiresAt: toIso(row.token_expires_at),
+      permissions: toStringArray(row.permissions),
+      lastCheckedAt: toIso(row.last_checked_at),
+    };
+  },
+
+  async getContents(filters: {
+    keyword?: string;
+    status?: string[];
+    contentType?: string[];
+  }): Promise<ContentItem[]> {
+    const clauses: string[] = [];
+    const values: Array<string | string[]> = [];
+
+    if (filters.keyword) {
+      values.push(`%${filters.keyword}%`);
+      clauses.push(
+        `(title ilike $${values.length} or caption ilike $${values.length} or coalesce(labels::text, '') ilike $${values.length})`,
+      );
+    }
+
+    if (filters.status && filters.status.length > 0) {
+      values.push(filters.status);
+      clauses.push(`status = any($${values.length}::text[])`);
+    }
+
+    if (filters.contentType && filters.contentType.length > 0) {
+      values.push(filters.contentType);
+      clauses.push(`content_type = any($${values.length}::text[])`);
+    }
+
+    const where = clauses.length > 0 ? `where ${clauses.join(" and ")}` : "";
+    const result = await pool.query<ContentRow>(
+      `
+        select id, title, content_type, status, caption, hashtags,
+          validation_summary, created_at, updated_at, labels,
+          approval_status, created_by, updated_by
+        from contents
+        ${where}
+        order by updated_at desc
+      `,
+      values,
+    );
+
+    return fetchContents(result.rows);
+  },
+
+  async getContentById(id: string): Promise<ContentItem | undefined> {
+    return fetchContentById(id);
+  },
+
+  async getMediaAssets(): Promise<MediaAsset[]> {
+    const result = await pool.query<{
+      id: string;
+      file_name: string;
+      mime_type: string;
+      media_type: "image" | "video";
+      file_size: number;
+      width: number;
+      height: number;
+      duration_seconds: number | null;
+      url: string;
+      created_at: string | Date;
+    }>(
+      `
+        select id, file_name, mime_type, media_type, file_size, width, height,
+          duration_seconds, url, created_at
+        from media_assets
+        order by created_at desc
+      `,
+    );
+
+    return result.rows.map(mapMediaAsset);
+  },
+
+  async createContent(
+    input: Omit<
+      ContentItem,
+      "id" | "status" | "validation" | "createdAt" | "updatedAt" | "versions"
+    >,
+  ): Promise<ContentItem> {
+    const actorUserId = await resolveActorUserId(input.createdBy);
+    const assets = await getMediaAssetsByIds(input.mediaAssetIds);
+    const validation = validateContentDraft(input, assets);
+    const contentId = createId("content");
+    const versionId = createId("version");
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      await client.query(
+        `
+          insert into contents (
+            id, user_id, title, content_type, status, caption, hashtags,
+            validation_summary, created_at, updated_at, labels,
+            approval_status, created_by, updated_by
+          ) values (
+            $1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb,
+            $8::jsonb, current_timestamp, current_timestamp, $9::jsonb,
+            $10, $11, $12
+          )
+        `,
+        [
+          contentId,
+          actorUserId,
+          input.title,
+          input.contentType,
+          "draft",
+          input.caption,
+          JSON.stringify(input.hashtags),
+          JSON.stringify(validation),
+          JSON.stringify(input.labels),
+          input.approvalStatus,
+          input.createdBy,
+          input.updatedBy,
+        ],
+      );
+
+      for (const [index, mediaAssetId] of input.mediaAssetIds.entries()) {
+        await client.query(
+          `
+            insert into content_media_assets (content_id, media_asset_id, display_order)
+            values ($1::uuid, $2::uuid, $3)
+          `,
+          [contentId, mediaAssetId, index + 1],
+        );
+      }
+
+      await client.query(
+        `
+          insert into content_versions (id, content_id, updated_at, updated_by, summary)
+          values ($1::uuid, $2::uuid, current_timestamp, $3, $4)
+        `,
+        [versionId, contentId, input.updatedBy, "初回作成"],
+      );
+
+      await createAuditLog(
+        "content.created",
+        "content",
+        contentId,
+        { title: input.title },
+        input.createdBy,
+        client,
+      );
+
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const content = await fetchContentById(contentId);
+    if (!content) {
+      throw new Error("Created content was not found");
+    }
+
+    return content;
+  },
+
+  async updateContent(
+    id: string,
+    patch: Partial<ContentItem>,
+  ): Promise<ContentItem | undefined> {
+    const existing = await fetchContentById(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    const merged: ContentItem = {
+      ...existing,
+      ...patch,
+      hashtags: patch.hashtags ?? existing.hashtags,
+      labels: patch.labels ?? existing.labels,
+      mediaAssetIds: patch.mediaAssetIds ?? existing.mediaAssetIds,
+      approvalStatus: patch.approvalStatus ?? existing.approvalStatus,
+      createdBy: patch.createdBy ?? existing.createdBy,
+      updatedBy: patch.updatedBy ?? existing.updatedBy,
+      status: patch.status ?? existing.status,
+      versions: existing.versions,
+    };
+    const assets = await getMediaAssetsByIds(merged.mediaAssetIds);
+    const validation = validateContentDraft(merged, assets);
+    const versionId = createId("version");
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      await client.query(
+        `
+          update contents
+          set title = $2,
+            content_type = $3,
+            status = $4,
+            caption = $5,
+            hashtags = $6::jsonb,
+            validation_summary = $7::jsonb,
+            updated_at = current_timestamp,
+            labels = $8::jsonb,
+            approval_status = $9,
+            created_by = $10,
+            updated_by = $11
+          where id = $1::uuid
+        `,
+        [
+          id,
+          merged.title,
+          merged.contentType,
+          merged.status,
+          merged.caption,
+          JSON.stringify(merged.hashtags),
+          JSON.stringify(validation),
+          JSON.stringify(merged.labels),
+          merged.approvalStatus,
+          merged.createdBy,
+          merged.updatedBy,
+        ],
+      );
+
+      await client.query(`delete from content_media_assets where content_id = $1::uuid`, [id]);
+
+      for (const [index, mediaAssetId] of merged.mediaAssetIds.entries()) {
+        await client.query(
+          `
+            insert into content_media_assets (content_id, media_asset_id, display_order)
+            values ($1::uuid, $2::uuid, $3)
+          `,
+          [id, mediaAssetId, index + 1],
+        );
+      }
+
+      await client.query(
+        `
+          insert into content_versions (id, content_id, updated_at, updated_by, summary)
+          values ($1::uuid, $2::uuid, current_timestamp, $3, $4)
+        `,
+        [versionId, id, merged.updatedBy, "下書き更新"],
+      );
+
+      await createAuditLog(
+        "content.updated",
+        "content",
+        id,
+        { title: merged.title },
+        merged.updatedBy,
+        client,
+      );
+
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return fetchContentById(id);
+  },
+
+  async duplicateContent(id: string): Promise<ContentItem | undefined> {
+    const existing = await fetchContentById(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    return this.createContent({
+      title: `${existing.title}_copy`,
+      contentType: existing.contentType,
+      caption: existing.caption,
+      hashtags: [...existing.hashtags],
+      labels: [...existing.labels],
+      mediaAssetIds: [...existing.mediaAssetIds],
+      approvalStatus: existing.approvalStatus,
+      createdBy: DEFAULT_ACTOR_KEY,
+      updatedBy: DEFAULT_ACTOR_KEY,
+    });
+  },
+
+  async validateContent(id: string): Promise<ContentItem["validation"] | undefined> {
+    const content = await fetchContentById(id);
+    if (!content) {
+      return undefined;
+    }
+
+    const assets = await getMediaAssetsByIds(content.mediaAssetIds);
+    const validation = validateContentDraft(content, assets);
+    await pool.query(
+      `
+        update contents
+        set validation_summary = $2::jsonb,
+          updated_at = current_timestamp
+        where id = $1::uuid
+      `,
+      [id, JSON.stringify(validation)],
+    );
+    return validation;
+  },
+
+  async validateSchedule(input: {
+    contentId: string;
+    publishAt: string;
+    timezone: string;
+    accountId: string;
+  }): Promise<{ valid: boolean; messages: string[] }> {
+    const messages: string[] = [];
+    const [integrationResult, contentResult, duplicateResult] = await Promise.all([
+      pool.query<{ status: InstagramIntegration["status"] }>(
+        `
+          select status
+          from instagram_accounts
+          where instagram_account_id = $1
+          limit 1
+        `,
+        [input.accountId],
+      ),
+      pool.query<{ approval_status: ContentItem["approvalStatus"] }>(
+        `
+          select approval_status
+          from contents
+          where id = $1::uuid
+          limit 1
+        `,
+        [input.contentId],
+      ),
+      pool.query<{ id: string }>(
+        `
+          select s.id
+          from schedules s
+          join instagram_accounts ia on ia.id = s.instagram_account_id
+          where s.content_id = $1::uuid
+            and ia.instagram_account_id = $2
+            and s.publish_at = $3::timestamp
+          limit 1
+        `,
+        [input.contentId, input.accountId, input.publishAt],
+      ),
+    ]);
+
+    const integration = integrationResult.rows[0];
+    const content = contentResult.rows[0];
+
+    if (!integration || integration.status !== "active") {
+      messages.push(
+        "アカウント連携の有効期限が切れています。再連携してください。",
+      );
+    }
+
+    if (!content) {
+      messages.push("コンテンツが見つかりません。");
+    }
+
+    if (new Date(input.publishAt).getTime() <= Date.now()) {
+      messages.push("公開日時は現在より後の時刻を指定してください。");
+    }
+
+    if (duplicateResult.rows.length > 0) {
+      messages.push(
+        "同一コンテンツ・同一公開先・同一時刻の重複予約はできません。",
+      );
+    }
+
+    if (content?.approval_status === "pending") {
+      messages.push("承認待ちのため予約できません。");
+    }
+
+    return { valid: messages.length === 0, messages };
+  },
+
+  async createSchedule(input: {
+    contentId: string;
+    publishAt: string;
+    timezone: string;
+    accountId: string;
+  }): Promise<{
+    id: string;
+    contentId: string;
+    accountId: string;
+    publishAt: string;
+    timezone: string;
+    status: "scheduled";
+    createdBy: string;
+    createdAt: string;
+    updatedAt: string;
+  }> {
+    const actorUserId = await resolveActorUserId(DEFAULT_ACTOR_KEY);
+    const integrationResult = await pool.query<{ id: string }>(
+      `
+        select id
+        from instagram_accounts
+        where instagram_account_id = $1
+        limit 1
+      `,
+      [input.accountId],
+    );
+    const integration = integrationResult.rows[0];
+
+    if (!integration) {
+      throw new Error("Integration not found for schedule creation");
+    }
+
+    const scheduleId = createId("schedule");
+    const jobId = createId("job");
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      await client.query(
+        `
+          insert into schedules (
+            id, content_id, instagram_account_id, publish_at, timezone,
+            status, created_by, created_at, updated_at
+          ) values (
+            $1::uuid, $2::uuid, $3::uuid, $4::timestamp, $5,
+            $6, $7::uuid, current_timestamp, current_timestamp
+          )
+        `,
+        [
+          scheduleId,
+          input.contentId,
+          integration.id,
+          input.publishAt,
+          input.timezone,
+          "scheduled",
+          actorUserId,
+        ],
+      );
+
+      await client.query(
+        `
+          update contents
+          set status = 'scheduled',
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [input.contentId],
+      );
+
+      await client.query(
+        `
+          insert into posting_jobs (
+            id, schedule_id, job_status, retry_count,
+            created_at, updated_at, executed_at
+          ) values (
+            $1::uuid, $2::uuid, $3, 0,
+            current_timestamp, current_timestamp, current_timestamp
+          )
+        `,
+        [jobId, scheduleId, "scheduled"],
+      );
+
+      await createAuditLog(
+        "schedule.created",
+        "schedule",
+        scheduleId,
+        { contentId: input.contentId },
+        DEFAULT_ACTOR_KEY,
+        client,
+      );
+
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const scheduleResult = await pool.query<{
+      created_at: string | Date;
+      updated_at: string | Date;
+    }>(
+      `select created_at, updated_at from schedules where id = $1::uuid limit 1`,
+      [scheduleId],
+    );
+    const scheduleRow = scheduleResult.rows[0];
+
+    return {
+      id: scheduleId,
+      contentId: input.contentId,
+      accountId: input.accountId,
+      publishAt: input.publishAt,
+      timezone: input.timezone,
+      status: "scheduled",
+      createdBy: DEFAULT_ACTOR_KEY,
+      createdAt: toIso(scheduleRow?.created_at),
+      updatedAt: toIso(scheduleRow?.updated_at),
+    };
+  },
+
+  async getCalendarEvents(): Promise<CalendarEvent[]> {
+    const result = await pool.query<{
+      id: string;
+      title: string;
+      publish_at: string | Date;
+      status: CalendarEvent["status"];
+      content_type: CalendarEvent["contentType"];
+      instagram_account_id: string;
+    }>(
+      `
+        select s.id, c.title, s.publish_at, s.status, c.content_type,
+          ia.instagram_account_id
+        from schedules s
+        join contents c on c.id = s.content_id
+        join instagram_accounts ia on ia.id = s.instagram_account_id
+        order by s.publish_at asc
+      `,
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      startsAt: toIso(row.publish_at),
+      status: row.status,
+      contentType: row.content_type,
+      accountId: row.instagram_account_id,
+    }));
+  },
+
+  async getDashboardKpi(): Promise<DashboardKpi> {
+    const [jobAggregate, scheduleCount] = await Promise.all([
+      pool.query<{
+        total: string;
+        success_count: string;
+        failed_count: string;
+        action_required_count: string;
+      }>(
+        `
+          select
+            count(*)::text as total,
+            count(*) filter (where job_status = 'success')::text as success_count,
+            count(*) filter (where job_status = 'failed')::text as failed_count,
+            count(*) filter (
+              where job_status in ('action_required', 'reauthorization_required')
+            )::text as action_required_count
+          from posting_jobs
+        `,
+      ),
+      pool.query<{ count: string }>(`select count(*)::text as count from schedules`),
+    ]);
+    const jobRow = jobAggregate.rows[0] ?? {
+      total: "0",
+      success_count: "0",
+      failed_count: "0",
+      action_required_count: "0",
+    };
+    const total = Math.max(Number(jobRow.total), 1);
+
+    return {
+      postingExecutionRate: Math.round((Number(jobRow.success_count) / total) * 100),
+      weeklyPostCount: Number(scheduleCount.rows[0]?.count ?? 0),
+      failedCount: Number(jobRow.failed_count),
+      actionRequiredCount: Number(jobRow.action_required_count),
+    };
+  },
+
+  async getDashboardAlerts(): Promise<DashboardAlert[]> {
+    const kpi = await this.getDashboardKpi();
+    const alerts: DashboardAlert[] = [];
+
+    if (kpi.actionRequiredCount > 0) {
+      alerts.push({
+        id: createId("alert"),
+        level: "warning",
+        title: "再対応が必要な投稿があります",
+        description: "メディア仕様不一致のため、修正して再実行してください。",
+        link: "/logs",
+      });
+    }
+
+    if (kpi.postingExecutionRate < EXECUTION_RATE_ALERT_THRESHOLD) {
+      alerts.push({
+        id: createId("alert"),
+        level: "info",
+        title: "投稿実行率が目標を下回る見込みです。",
+        description: `今週の成功率は ${EXECUTION_RATE_ALERT_THRESHOLD}% を下回っています。`,
+        link: "/dashboard",
+      });
+    }
+
+    return alerts;
+  },
+
+  async getJobLogs(): Promise<JobLog[]> {
+    const result = await pool.query<{
+      id: string;
+      schedule_id: string;
+      content_id: string;
+      job_status: JobLog["status"];
+      retry_count: number;
+      error_type: JobLog["errorType"] | null;
+      error_code: string | null;
+      error_message: string | null;
+      resolution: string | null;
+      executed_at: string | Date;
+    }>(
+      `
+        select pj.id, pj.schedule_id, s.content_id, pj.job_status, pj.retry_count,
+          pj.error_type, pj.error_code, pj.error_message, pj.resolution,
+          pj.executed_at
+        from posting_jobs pj
+        join schedules s on s.id = pj.schedule_id
+        order by pj.executed_at desc, pj.created_at desc
+      `,
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      scheduleId: row.schedule_id,
+      contentId: row.content_id,
+      status: row.job_status,
+      retryCount: row.retry_count,
+      errorType: row.error_type ?? undefined,
+      errorCode: row.error_code ?? undefined,
+      errorMessage: row.error_message ?? undefined,
+      resolution: row.resolution ?? undefined,
+      executedAt: toIso(row.executed_at),
+    }));
+  },
+
+  async retryJob(jobId: string): Promise<JobLog | undefined> {
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      const updateResult = await client.query<{
+        id: string;
+        schedule_id: string;
+        content_id: string;
+        job_status: JobLog["status"];
+        retry_count: number;
+        error_type: JobLog["errorType"] | null;
+        error_code: string | null;
+        error_message: string | null;
+        resolution: string | null;
+        executed_at: string | Date;
+      }>(
+        `
+          update posting_jobs pj
+          set job_status = 'retrying',
+            retry_count = pj.retry_count + 1,
+            error_type = 'network',
+            error_code = 'RETRY_REQUESTED',
+            error_message = '再実行する',
+            resolution = concat('自動再試行中です（', pj.retry_count + 1, '/3）。'),
+            executed_at = current_timestamp,
+            updated_at = current_timestamp
+          from schedules s
+          where pj.id = $1::uuid
+            and s.id = pj.schedule_id
+          returning pj.id, pj.schedule_id, s.content_id, pj.job_status, pj.retry_count,
+            pj.error_type, pj.error_code, pj.error_message, pj.resolution,
+            pj.executed_at
+        `,
+        [jobId],
+      );
+      const row = updateResult.rows[0];
+
+      if (!row) {
+        await client.query("rollback");
+        return undefined;
+      }
+
+      await createAuditLog(
+        "job.retried",
+        "posting_job",
+        row.id,
+        { contentId: row.content_id },
+        DEFAULT_ACTOR_KEY,
+        client,
+      );
+
+      await client.query("commit");
+
+      return {
+        id: row.id,
+        scheduleId: row.schedule_id,
+        contentId: row.content_id,
+        status: row.job_status,
+        retryCount: row.retry_count,
+        errorType: row.error_type ?? undefined,
+        errorCode: row.error_code ?? undefined,
+        errorMessage: row.error_message ?? undefined,
+        resolution: row.resolution ?? undefined,
+        executedAt: toIso(row.executed_at),
+      };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async getAuditLogs(): Promise<AuditLog[]> {
+    const result = await pool.query<{
+      id: string;
+      actor_user_id: string | null;
+      action: string;
+      resource_type: string;
+      resource_id: string;
+      metadata: Record<string, string> | null;
+      created_at: string | Date;
+    }>(
+      `
+        select id, actor_user_id, action, resource_type, resource_id, metadata, created_at
+        from audit_logs
+        order by created_at desc
+      `,
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      actorUserId: row.actor_user_id ?? DEFAULT_ACTOR_KEY,
+      action: row.action,
+      resourceType: row.resource_type,
+      resourceId: row.resource_id,
+      metadata: row.metadata ?? {},
+      createdAt: toIso(row.created_at),
+    }));
+  },
+};
