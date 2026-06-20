@@ -156,6 +156,35 @@ async function getMediaAssetsByIds(assetIds: string[]): Promise<MediaAsset[]> {
   return result.rows.map(mapMediaAsset);
 }
 
+async function getMediaAssetByStorageKey(
+  storageKey: string,
+): Promise<MediaAsset | undefined> {
+  const result = await pool.query<{
+    id: string;
+    file_name: string;
+    mime_type: string;
+    media_type: "image" | "video";
+    file_size: number;
+    width: number;
+    height: number;
+    duration_seconds: number | null;
+    url: string;
+    created_at: string | Date;
+  }>(
+    `
+      select id, file_name, mime_type, media_type, file_size, width, height,
+        duration_seconds, url, created_at
+      from media_assets
+      where storage_key = $1
+      limit 1
+    `,
+    [storageKey],
+  );
+
+  const row = result.rows[0];
+  return row ? mapMediaAsset(row) : undefined;
+}
+
 async function getContentRelations(contentIds: string[]): Promise<{
   mediaIdsByContent: Map<string, string[]>;
   versionsByContent: Map<string, ContentItem["versions"]>;
@@ -669,6 +698,95 @@ export const store = {
     );
 
     return result.rows.map(mapMediaAsset);
+  },
+
+  async findMediaAssetByStorageKey(
+    storageKey: string,
+  ): Promise<MediaAsset | undefined> {
+    return getMediaAssetByStorageKey(storageKey);
+  },
+
+  async getMediaAssetById(id: string): Promise<MediaAsset | undefined> {
+    const assets = await getMediaAssetsByIds([id]);
+    return assets[0];
+  },
+
+  async getMediaAssetStorageKeyById(id: string): Promise<string | undefined> {
+    const result = await pool.query<{ storage_key: string }>(
+      `
+        select storage_key
+        from media_assets
+        where id = $1::uuid
+        limit 1
+      `,
+      [id],
+    );
+
+    return result.rows[0]?.storage_key;
+  },
+
+  async createMediaAsset(input: {
+    storageKey: string;
+    fileName: string;
+    mimeType: string;
+    mediaType: "image" | "video";
+    fileSize: number;
+    width: number;
+    height: number;
+    durationSeconds?: number;
+    url: string;
+  }): Promise<MediaAsset> {
+    const assetId = createId("asset");
+    await pool.query(
+      `
+        insert into media_assets (
+          id, storage_key, file_name, mime_type, media_type,
+          file_size, width, height, duration_seconds, url, created_at
+        ) values (
+          $1::uuid, $2, $3, $4, $5,
+          $6, $7, $8, $9, $10, current_timestamp
+        )
+      `,
+      [
+        assetId,
+        input.storageKey,
+        input.fileName,
+        input.mimeType,
+        input.mediaType,
+        input.fileSize,
+        input.width,
+        input.height,
+        input.durationSeconds ?? null,
+        input.url,
+      ],
+    );
+
+    const created = await getMediaAssetsByIds([assetId]);
+    const asset = created[0];
+
+    if (!asset) {
+      throw new Error("Created media asset was not found");
+    }
+
+    return asset;
+  },
+
+  async updateMediaAssetUrl(id: string, url: string): Promise<MediaAsset> {
+    await pool.query(
+      `
+        update media_assets
+        set url = $2
+        where id = $1::uuid
+      `,
+      [id, url],
+    );
+
+    const asset = await this.getMediaAssetById(id);
+    if (!asset) {
+      throw new Error("Updated media asset was not found");
+    }
+
+    return asset;
   },
 
   async createContent(

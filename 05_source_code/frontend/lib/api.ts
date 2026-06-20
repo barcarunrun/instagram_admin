@@ -39,6 +39,22 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function uploadFile<T>(path: string, formData: FormData): Promise<T> {
+  const response = await fetch(`${getApiBase()}${path}`, {
+    method: "POST",
+    body: formData,
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => undefined);
+    throw new Error(body?.error?.message ?? "API request failed");
+  }
+
+  return response.json() as Promise<T>;
+}
+
 export const api = {
   login(payload: {
     email: string;
@@ -148,6 +164,12 @@ export const api = {
 
   getMediaAssets(): Promise<{ items: MediaAsset[] }> {
     return apiFetch<{ items: MediaAsset[] }>("/media-assets");
+  },
+
+  uploadMedia(file: File): Promise<MediaAsset> {
+    const formData = new FormData();
+    formData.append("file", file);
+    return uploadFile<MediaAsset>("/media-assets", formData);
   },
 
   validateSchedule(payload: {

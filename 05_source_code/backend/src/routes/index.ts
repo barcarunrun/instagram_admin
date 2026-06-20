@@ -4,6 +4,10 @@ import {
   type Request,
   type Response,
 } from "express";
+import { createHash } from "node:crypto";
+import path from "node:path";
+import multer from "multer";
+import { fileTypeFromBuffer } from "file-type";
 import { z } from "zod";
 import { recordAuditLog, store } from "../domain/postgres-store.js";
 import {
@@ -14,6 +18,11 @@ import {
 import { requireAuth } from "../lib/auth-middleware.js";
 import { checkDatabaseConnection } from "../lib/db.js";
 import { sendError } from "../lib/errors.js";
+import { extractMediaMetadata } from "../lib/media-metadata.js";
+import {
+  getStoredMediaPath,
+  writeMediaToLocalStorage,
+} from "../lib/media-storage.js";
 import {
   consumeInstagramOAuthSession,
   createInstagramOAuthSession,
@@ -33,6 +42,20 @@ import { checkRedisConnection, getRedisConnectionInfo } from "../lib/redis.js";
 import { encryptToken } from "../lib/token-crypto.js";
 
 const router = Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 },
+});
+const allowedMimeTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "video/mp4",
+  "video/quicktime",
+]);
+const maxImageFileSize = 10 * 1024 * 1024;
+const maxVideoFileSize = 100 * 1024 * 1024;
 
 const contentSchema = z.object({
   title: z.string().min(1),
@@ -105,6 +128,58 @@ function asyncHandler(
   return (request: Request, response: Response, next: NextFunction) => {
     void handler(request, response, next).catch(next);
   };
+}
+
+function runUploadMiddleware(
+  request: Request,
+  response: Response,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    upload.single("file")(request, response, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+function buildStorageKey(buffer: Buffer, originalName: string): string {
+  const hash = createHash("sha256").update(buffer).digest("hex");
+  const extension = path.extname(originalName).toLowerCase();
+  return `${hash.slice(0, 2)}/${hash}${extension}`;
+}
+
+function validateUploadedFile(
+  file: Express.Multer.File,
+  mimeType: string,
+): {
+  valid: boolean;
+  message?: string;
+  reason?: string;
+} {
+  if (!allowedMimeTypes.has(mimeType)) {
+    return {
+      valid: false,
+      reason: "unsupported_mime_type",
+      message: "サポートされていないメディア形式です。",
+    };
+  }
+
+  const sizeLimit = mimeType.startsWith("video/")
+    ? maxVideoFileSize
+    : maxImageFileSize;
+  if (file.size > sizeLimit) {
+    return {
+      valid: false,
+      reason: "file_too_large",
+      message: "ファイルサイズが上限を超えています。",
+    };
+  }
+
+  return { valid: true };
 }
 
 async function refreshInstagramStatuses(): Promise<void> {
@@ -330,6 +405,122 @@ router.get(
   "/auth/me",
   asyncHandler(async (request, response) => {
     response.json({ user: request.authUser });
+  }),
+);
+
+router.post(
+  "/media-assets",
+  asyncHandler(async (request, response) => {
+    try {
+      await runUploadMiddleware(request, response);
+    } catch (error) {
+      if (error instanceof multer.MulterError) {
+        return sendError(
+          response,
+          400,
+          "VALIDATION_ERROR",
+          "アップロード内容を確認してください。",
+          [{ field: "file", reason: error.code }],
+        );
+      }
+
+      throw error;
+    }
+
+    const file = request.file;
+    if (!file) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "メディアファイルを指定してください。",
+        [{ field: "file", reason: "required" }],
+      );
+    }
+
+    const detectedType = await fileTypeFromBuffer(file.buffer);
+    const mimeType = detectedType?.mime ?? file.mimetype;
+    const validation = validateUploadedFile(file, mimeType);
+    if (!validation.valid) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        validation.message ?? "メディアファイルを確認してください。",
+        [{ field: "file", reason: validation.reason ?? "invalid_file" }],
+      );
+    }
+
+    const storageKey = buildStorageKey(file.buffer, file.originalname);
+    const existing = await store.findMediaAssetByStorageKey(storageKey);
+    if (existing) {
+      return response.status(200).json(existing);
+    }
+
+    const storedPath = await writeMediaToLocalStorage({
+      storageKey,
+      buffer: file.buffer,
+    });
+    const metadata = await extractMediaMetadata({
+      buffer: file.buffer,
+      filePath: storedPath,
+      mimeType,
+    });
+    const asset = await store.createMediaAsset({
+      storageKey,
+      fileName: file.originalname,
+      mimeType,
+      mediaType: metadata.mediaType,
+      fileSize: file.size,
+      width: metadata.width,
+      height: metadata.height,
+      durationSeconds: metadata.durationSeconds,
+      url: "/api/media-assets/pending/file",
+    });
+    const finalizedUrl = `/api/media-assets/${asset.id}/file`;
+    const updated = await store.updateMediaAssetUrl(asset.id, finalizedUrl);
+
+    await recordAuditLog({
+      action: "media.uploaded",
+      resourceType: "media_asset",
+      resourceId: updated.id,
+      metadata: {
+        fileName: updated.fileName,
+        mimeType: updated.mimeType,
+        requestId: request.requestId,
+      },
+      actorKey: request.authUser?.id ?? "user_demo",
+    });
+
+    response.status(201).json(updated);
+  }),
+);
+
+router.get(
+  "/media-assets/:id/file",
+  asyncHandler(async (request, response) => {
+    const asset = await store.getMediaAssetById(String(request.params.id));
+    if (!asset) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "メディア資産が見つかりません。",
+      );
+    }
+
+    const storageKey = await store.getMediaAssetStorageKeyById(asset.id);
+    if (!storageKey) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "保存済みメディアが見つかりません。",
+      );
+    }
+
+    response.type(asset.mimeType);
+    response.sendFile(getStoredMediaPath(storageKey));
   }),
 );
 

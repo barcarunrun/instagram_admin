@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { api } from "../lib/api";
 import type {
   ContentItem,
@@ -24,7 +24,7 @@ const initialForm = {
 
 export function ContentStudio({
   initialContents,
-  mediaAssets,
+  mediaAssets: initialMediaAssets,
   accountId,
 }: {
   initialContents: ContentItem[];
@@ -32,6 +32,7 @@ export function ContentStudio({
   accountId: string;
 }) {
   const [contents, setContents] = useState(initialContents);
+  const [mediaAssets, setMediaAssets] = useState(initialMediaAssets);
   const [selectedId, setSelectedId] = useState("");
   const [form, setForm] = useState(initialForm);
   const [message, setMessage] = useState<string>("");
@@ -47,6 +48,8 @@ export function ContentStudio({
     period: "all",
   });
   const [view, setView] = useState<"list" | "edit">("list");
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedContent =
     contents.find((item) => item.id === selectedId) ?? null;
@@ -80,6 +83,11 @@ export function ContentStudio({
     setContents(result.items);
   }
 
+  async function refreshMediaAssets() {
+    const result = await api.getMediaAssets();
+    setMediaAssets(result.items);
+  }
+
   function buildPayload() {
     return {
       title: form.title,
@@ -105,6 +113,46 @@ export function ContentStudio({
         ? current.mediaAssetIds.filter((item) => item !== id)
         : [...current.mediaAssetIds, id],
     }));
+  }
+
+  async function uploadFiles(files: FileList | File[]): Promise<void> {
+    const items = Array.from(files);
+    if (items.length === 0) {
+      return;
+    }
+
+    setIsUploading(true);
+    setMessage("");
+
+    try {
+      const uploadedAssets = [] as MediaAsset[];
+      for (const file of items) {
+        uploadedAssets.push(await api.uploadMedia(file));
+      }
+
+      await refreshMediaAssets();
+      setForm((current) => ({
+        ...current,
+        mediaAssetIds: Array.from(
+          new Set([
+            ...current.mediaAssetIds,
+            ...uploadedAssets.map((asset) => asset.id),
+          ]),
+        ),
+      }));
+      setMessage(`${uploadedAssets.length}件のメディアを登録しました。`);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "メディアアップロードに失敗しました。",
+      );
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
   }
 
   function onSave() {
@@ -333,7 +381,14 @@ export function ContentStudio({
                 </div>
               </div>
               <div className="dropzone">
-                <div className="dropzone-inner">
+                <div
+                  className="dropzone-inner"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    void uploadFiles(event.dataTransfer.files);
+                  }}
+                >
                   <div className="dropzone-icon">
                     <UploadIcon />
                   </div>
@@ -343,8 +398,25 @@ export function ContentStudio({
                       リールで利用可能な形式: .mp4 / .mov
                     </div>
                   </div>
-                  <button type="button" className="secondary-button">
-                    ファイルを選択
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime"
+                    multiple
+                    hidden
+                    onChange={(event) => {
+                      if (event.target.files) {
+                        void uploadFiles(event.target.files);
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                  >
+                    {isUploading ? "アップロード中..." : "ファイルを選択"}
                   </button>
                   <div className="pill-row">
                     <span className="tag-chip">.jpg</span>
@@ -477,7 +549,7 @@ export function ContentStudio({
               <button
                 className="secondary-button"
                 onClick={onSave}
-                disabled={isPending}
+                disabled={isPending || isUploading}
               >
                 {isPending ? "保存中..." : "下書きを保存"}
               </button>

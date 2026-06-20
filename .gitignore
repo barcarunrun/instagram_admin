@@ -26,7 +26,11 @@ dist/
 .next/
 out/
 coverage/
+test-results/
 
 # Local tooling and caches
 .turbo/
 .cache/
+
+# Local runtime artifacts
+05_source_code/backend/uploads/
