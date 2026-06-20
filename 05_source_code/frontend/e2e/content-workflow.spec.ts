@@ -11,6 +11,7 @@ const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_ORIGIN ??
   `http://localhost:${process.env.PLAYWRIGHT_BACKEND_PORT ?? "4100"}`;
 const seededContentTitle = "新作シャツ_初夏コーデ_2026W25";
+const mockInstagramAccountId = "ig_mock_001";
 const pngBase64 = `
 iVBORw0KGgoAAAANSUhEUgAAAUAAAAFACAIAAABC8jL9AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAIQ0lE
 QVR4nO3VwQ0DAQwCwSvxykn3mx7yQZFHogBrAfP0eQkBBPrPIjzzCwgBBFJgIUCge3tggfceEAIpsBAg
@@ -48,6 +49,16 @@ async function login(page: Page): Promise<void> {
   await page.getByLabel("パスワード").fill("LocalPass123!");
   await page.getByRole("button", { name: "ログインする" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
+
+  const apiContext = await createAuthedApiContext(page.context());
+
+  try {
+    await ensureActiveInstagramIntegration(apiContext, page);
+  } finally {
+    await apiContext.dispose();
+  }
+
+  await page.goto("/dashboard");
 }
 
 async function createAuthedApiContext(
@@ -70,6 +81,67 @@ async function createAuthedApiContext(
   });
 }
 
+async function resetInstagramIntegrations(
+  apiContext: APIRequestContext,
+): Promise<void> {
+  const response = await apiContext.post(
+    "/api/testing/integrations/instagram/reset",
+  );
+  expect(response.status()).toBe(204);
+}
+
+async function connectSelectedAccount(page: Page): Promise<void> {
+  const connectButton = page.getByRole("button", {
+    name: "このアカウントで接続",
+  });
+  await expect(connectButton).toBeEnabled();
+  await connectButton.click();
+  await expect(page.locator(".status-panel")).toContainText("active");
+}
+
+async function ensureActiveInstagramIntegration(
+  apiContext: APIRequestContext,
+  page: Page,
+): Promise<void> {
+  await resetInstagramIntegrations(apiContext);
+  await page.goto("/connect");
+  await page.getByRole("button", { name: "Facebookで連携する" }).click();
+  await expect(page).toHaveURL(/\/connect(\?|$)/);
+  await expect(
+    page.getByRole("button", { name: "このアカウントで接続" }),
+  ).toBeEnabled();
+  await connectSelectedAccount(page);
+}
+
+async function getSeededMediaAssets(
+  apiContext: APIRequestContext,
+): Promise<{
+  imageIds: string[];
+  imageNames: string[];
+  videoIds: string[];
+  videoNames: string[];
+}> {
+  const response = await apiContext.get("/api/media-assets");
+  expect(response.ok()).toBeTruthy();
+  const body = (await response.json()) as {
+    items: Array<{
+      id: string;
+      fileName: string;
+      mediaType: "image" | "video";
+    }>;
+  };
+
+  const images = body.items.filter((item) => item.mediaType === "image");
+  const videos = body.items.filter((item) => item.mediaType === "video");
+
+  return {
+    imageIds: images.map((item) => item.id),
+    imageNames: images.map((item) => item.fileName),
+    videoIds: videos.map((item) => item.id),
+    videoNames: videos.map((item) => item.fileName),
+  };
+}
+
 function uniqueTitle(prefix: string): string {
   return `${prefix}_${Date.now()}`;
 }
@@ -79,6 +151,48 @@ async function startNewContent(page: Page): Promise<void> {
     .locator("section.page-hero")
     .getByRole("button", { name: "新規投稿作成" })
     .click();
+}
+
+async function createApprovedContent(
+  apiContext: APIRequestContext,
+  input: {
+    title: string;
+    mediaAssetIds: string[];
+    contentType?: "image" | "video" | "carousel" | "reel" | "extension";
+  },
+): Promise<{ id: string; title: string }> {
+  const response = await apiContext.post("/api/contents", {
+    data: {
+      title: input.title,
+      contentType: input.contentType ?? "image",
+      caption: `${input.title} の予約テストです`,
+      hashtags: ["#schedule"],
+      labels: ["schedule-test"],
+      mediaAssetIds: input.mediaAssetIds,
+      contentConfig: {},
+      approvalStatus: "approved",
+    },
+  });
+
+  expect(response.ok()).toBeTruthy();
+  const body = (await response.json()) as { id: string; title: string };
+  return body;
+}
+
+async function createScheduleViaApi(
+  apiContext: APIRequestContext,
+  payload: {
+    contentId: string;
+    publishAt: string;
+    timezone: string;
+    accountId: string;
+  },
+): Promise<void> {
+  const response = await apiContext.post("/api/schedules", {
+    data: payload,
+  });
+
+  expect(response.ok()).toBeTruthy();
 }
 
 test.describe("TASK-016 Draft content acceptance", () => {
@@ -178,6 +292,301 @@ test.describe("TASK-016 Draft content acceptance", () => {
       expect(
         updated?.versions.some((version) => version.summary === "下書き更新"),
       ).toBeTruthy();
+    } finally {
+      await apiContext.dispose();
+    }
+  });
+
+  test("TC-206: カルーセルの並び順を保存できる", async ({ page }) => {
+    const title = uniqueTitle("carousel_draft");
+    await login(page);
+    const apiContext = await createAuthedApiContext(page.context());
+
+    try {
+      const seededAssets = await getSeededMediaAssets(apiContext);
+      expect(seededAssets.imageNames.length).toBeGreaterThanOrEqual(2);
+
+      await page.goto("/contents");
+      await startNewContent(page);
+      await page.getByLabel("投稿名").fill(title);
+      await page.getByLabel("投稿種別").selectOption("carousel");
+      await page.getByLabel("キャプション").fill("カルーセル順序の保存テストです");
+      await page
+        .getByRole("button", { name: new RegExp(seededAssets.imageNames[0]) })
+        .click();
+      await page
+        .getByRole("button", { name: new RegExp(seededAssets.imageNames[1]) })
+        .click();
+      await page.getByRole("button", { name: "下へ" }).first().click();
+      await page.getByRole("button", { name: "下書きを保存" }).click();
+      await expect(page.getByRole("button", { name: title })).toBeVisible();
+
+      const response = await apiContext.get("/api/contents");
+      expect(response.ok()).toBeTruthy();
+      const body = (await response.json()) as {
+        items: Array<{
+          title: string;
+          contentConfig?: { orderedMediaAssetIds?: string[] };
+        }>;
+      };
+      const created = body.items.find((item) => item.title === title);
+      expect(created).toBeDefined();
+      expect(created?.contentConfig?.orderedMediaAssetIds).toEqual([
+        seededAssets.imageIds[1],
+        seededAssets.imageIds[0],
+      ]);
+    } finally {
+      await apiContext.dispose();
+    }
+  });
+
+  test("TC-207: リールはカバー画像を指定して保存できる", async ({ page }) => {
+    const title = uniqueTitle("reel_draft");
+    await login(page);
+    const apiContext = await createAuthedApiContext(page.context());
+
+    try {
+      const seededAssets = await getSeededMediaAssets(apiContext);
+      expect(seededAssets.videoNames.length).toBeGreaterThanOrEqual(1);
+      expect(seededAssets.imageNames.length).toBeGreaterThanOrEqual(1);
+
+      await page.goto("/contents");
+      await startNewContent(page);
+      await page.getByLabel("投稿名").fill(title);
+      await page.getByLabel("投稿種別").selectOption("reel");
+      await page.getByLabel("キャプション").fill("リール保存テストです");
+      await page
+        .getByRole("button", { name: new RegExp(seededAssets.videoNames[0]) })
+        .click();
+      await page.getByRole("button", { name: "下書きを保存" }).click();
+      await page.getByRole("button", { name: title }).click();
+      await expect(
+        page.getByText("リールではカバー画像を指定してください。"),
+      ).toBeVisible();
+
+      await page
+        .getByRole("button", { name: new RegExp(seededAssets.imageNames[0]) })
+        .last()
+        .click();
+      await page.getByRole("button", { name: "下書きを保存" }).click();
+      await page.getByRole("button", { name: title }).click();
+      await expect(page.getByText("0件のエラー / 0件の警告")).toBeVisible();
+    } finally {
+      await apiContext.dispose();
+    }
+  });
+
+  test("TC-208: 拡張種別のテンプレートキーを保持できる", async ({ page }) => {
+    const title = uniqueTitle("extension_draft");
+    await login(page);
+    const apiContext = await createAuthedApiContext(page.context());
+
+    try {
+      const seededAssets = await getSeededMediaAssets(apiContext);
+      expect(seededAssets.imageNames.length).toBeGreaterThanOrEqual(1);
+
+      await page.goto("/contents");
+      await startNewContent(page);
+      await page.getByLabel("投稿名").fill(title);
+      await page.getByLabel("投稿種別").selectOption("extension");
+      await page.getByLabel("キャプション").fill("拡張種別の保存テストです");
+      await page.getByLabel("拡張テンプレートキー").fill("story_pack_v2");
+      await page
+        .getByRole("button", { name: new RegExp(seededAssets.imageNames[0]) })
+        .click();
+      await page.getByRole("button", { name: "下書きを保存" }).click();
+      await expect(page.getByRole("button", { name: title })).toBeVisible();
+
+      const response = await apiContext.get("/api/contents");
+      expect(response.ok()).toBeTruthy();
+      const body = (await response.json()) as {
+        items: Array<{
+          title: string;
+          contentConfig?: { templateKey?: string };
+        }>;
+      };
+      const created = body.items.find((item) => item.title === title);
+      expect(created).toBeDefined();
+      expect(created?.contentConfig?.templateKey).toBe("story_pack_v2");
+    } finally {
+      await apiContext.dispose();
+    }
+  });
+
+  test("TC-301: 未来時刻で予約登録できる", async ({ page }) => {
+    await login(page);
+    const apiContext = await createAuthedApiContext(page.context());
+
+    try {
+      const seededAssets = await getSeededMediaAssets(apiContext);
+      const title = uniqueTitle("scheduled_content");
+      await createApprovedContent(apiContext, {
+        title,
+        mediaAssetIds: [seededAssets.imageIds[0]],
+      });
+
+      const future = new Date(Date.now() + 48 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 16);
+
+      await page.goto("/contents");
+      await page.getByRole("button", { name: title, exact: true }).click();
+      await page.getByLabel("公開日時").fill(future);
+      await page.getByRole("button", { name: "この日時で予約する" }).click();
+
+      await expect(
+        page.getByText("予約を登録しました。指定時刻に自動投稿されます。"),
+      ).toBeVisible();
+      await expect(page.getByText("現在の予約")).toBeVisible();
+      await expect(page.getByText("予約済み")).toBeVisible();
+    } finally {
+      await apiContext.dispose();
+    }
+  });
+
+  test("TC-302: 過去日時での予約はエラーになる", async ({ page }) => {
+    await login(page);
+    const apiContext = await createAuthedApiContext(page.context());
+
+    try {
+      const seededAssets = await getSeededMediaAssets(apiContext);
+      const title = uniqueTitle("past_schedule");
+      await createApprovedContent(apiContext, {
+        title,
+        mediaAssetIds: [seededAssets.imageIds[0]],
+      });
+
+      const past = new Date(Date.now() - 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 16);
+
+      await page.goto("/contents");
+      await page.getByRole("button", { name: title, exact: true }).click();
+      await page.getByLabel("公開日時").fill(past);
+      await page.getByRole("button", { name: "この日時で予約する" }).click();
+
+      await expect(
+        page.getByText("公開日時は現在より後の時刻を指定してください。"),
+      ).toBeVisible();
+    } finally {
+      await apiContext.dispose();
+    }
+  });
+
+  test("TC-303: 同一コンテンツ・同一時刻の重複予約は拒否される", async ({ page }) => {
+    await login(page);
+    const apiContext = await createAuthedApiContext(page.context());
+
+    try {
+      const seededAssets = await getSeededMediaAssets(apiContext);
+      const title = uniqueTitle("duplicate_schedule");
+      const content = await createApprovedContent(apiContext, {
+        title,
+        mediaAssetIds: [seededAssets.imageIds[0]],
+      });
+      const publishAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+
+      await createScheduleViaApi(apiContext, {
+        contentId: content.id,
+        publishAt,
+        timezone: "Asia/Tokyo",
+        accountId: mockInstagramAccountId,
+      });
+
+      const duplicateResponse = await apiContext.post("/api/schedules", {
+        data: {
+          contentId: content.id,
+          publishAt,
+          timezone: "Asia/Tokyo",
+          accountId: mockInstagramAccountId,
+        },
+      });
+
+      expect(duplicateResponse.status()).toBe(409);
+      const body = (await duplicateResponse.json()) as {
+        error: { message: string };
+      };
+      expect(body.error.message).toContain("重複予約");
+    } finally {
+      await apiContext.dispose();
+    }
+  });
+
+  test("TC-304: 予約を取り消せる", async ({ page }) => {
+    await login(page);
+    const apiContext = await createAuthedApiContext(page.context());
+
+    try {
+      const seededAssets = await getSeededMediaAssets(apiContext);
+      const title = uniqueTitle("cancel_schedule");
+      const content = await createApprovedContent(apiContext, {
+        title,
+        mediaAssetIds: [seededAssets.imageIds[0]],
+      });
+      await createScheduleViaApi(apiContext, {
+        contentId: content.id,
+        publishAt: new Date(Date.now() + 96 * 60 * 60 * 1000).toISOString(),
+        timezone: "Asia/Tokyo",
+        accountId: mockInstagramAccountId,
+      });
+
+      await page.goto("/contents");
+      await page.getByRole("button", { name: title, exact: true }).click();
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.getByRole("button", { name: "予約を取り消す" }).click();
+
+      await expect(page.getByText("予約を取り消しました。")).toBeVisible();
+      await expect(page.getByText("現在の予約")).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "この日時で予約する" }),
+      ).toBeVisible();
+    } finally {
+      await apiContext.dispose();
+    }
+  });
+
+  test("TC-305: 予約済みスケジュールを更新できる", async ({ page }) => {
+    await login(page);
+    const apiContext = await createAuthedApiContext(page.context());
+
+    try {
+      const seededAssets = await getSeededMediaAssets(apiContext);
+      const title = uniqueTitle("update_schedule");
+      const content = await createApprovedContent(apiContext, {
+        title,
+        mediaAssetIds: [seededAssets.imageIds[0]],
+      });
+      const initialPublishAt = new Date(
+        Date.now() + 24 * 60 * 60 * 1000,
+      ).toISOString();
+      await createScheduleViaApi(apiContext, {
+        contentId: content.id,
+        publishAt: initialPublishAt,
+        timezone: "Asia/Tokyo",
+        accountId: mockInstagramAccountId,
+      });
+
+      const updatedLocalValue = new Date(Date.now() + 120 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 16);
+
+      await page.goto("/contents");
+      await page.getByRole("button", { name: title, exact: true }).click();
+      await page.getByLabel("公開日時").fill(updatedLocalValue);
+      await page.getByRole("button", { name: "この内容で予約を更新" }).click();
+
+      await expect(
+        page.getByText("予約を更新しました。公開設定を反映しました。"),
+      ).toBeVisible();
+
+      const scheduleResponse = await apiContext.get(
+        `/api/schedules/content/${content.id}`,
+      );
+      expect(scheduleResponse.ok()).toBeTruthy();
+      const scheduleBody = (await scheduleResponse.json()) as {
+        publishAt: string;
+      };
+      expect(scheduleBody.publishAt).not.toBe(initialPublishAt);
     } finally {
       await apiContext.dispose();
     }
