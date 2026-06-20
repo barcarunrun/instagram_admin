@@ -7,6 +7,7 @@
 - 要件ごとに、API、Worker、UI、運用、テストまで分けてタスク化する。
 - 実装順は [04_tasks/implementation-order.md](04_tasks/implementation-order.md) に合わせる。
 - 担当者は個人名ではなく担当ロールで記載し、アサイン時に具体名へ置換する。
+- TASK-ID の完了条件には、対象ブランチの push または PR 更新によって GitHub Actions CI を実行し、成功を確認することを含める。
 
 ## 共通基盤（ローカル開発優先）
 
