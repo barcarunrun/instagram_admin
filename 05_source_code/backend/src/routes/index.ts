@@ -1,4 +1,9 @@
-import { Router, type NextFunction, type Request, type Response } from "express";
+import {
+  Router,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import { z } from "zod";
 import { recordAuditLog, store } from "../domain/postgres-store.js";
 import {
@@ -10,6 +15,13 @@ import { requireAuth } from "../lib/auth-middleware.js";
 import { checkDatabaseConnection } from "../lib/db.js";
 import { sendError } from "../lib/errors.js";
 import {
+  consumeInstagramOAuthSession,
+  createInstagramOAuthSession,
+  createInstagramExistingTokenSession,
+  finalizeInstagramOAuthCallback,
+  getInstagramOAuthSession,
+} from "../lib/instagram-oauth.js";
+import {
   completeMockOAuthCallback,
   createMockOAuthStart,
   getMockInstagramAccounts,
@@ -18,6 +30,7 @@ import {
   sendMockNotification,
 } from "../lib/local-mocks.js";
 import { checkRedisConnection, getRedisConnectionInfo } from "../lib/redis.js";
+import { encryptToken } from "../lib/token-crypto.js";
 
 const router = Router();
 
@@ -54,6 +67,34 @@ const notificationSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
+const instagramOAuthStartSchema = z.object({
+  intent: z.enum(["connect", "reauthorize"]).default("connect"),
+  scenario: z.string().optional(),
+});
+
+const instagramConnectSchema = z.object({
+  oauthSessionId: z.string().min(1),
+  accountId: z.string().min(1),
+});
+
+const instagramTestingExpireSchema = z.object({
+  accountId: z.string().min(1).optional(),
+});
+
+function assertTestingRouteEnabled(response: Response): boolean {
+  if (process.env.NODE_ENV === "production") {
+    sendError(
+      response,
+      404,
+      "RESOURCE_NOT_FOUND",
+      "テスト用エンドポイントは利用できません。",
+    );
+    return false;
+  }
+
+  return true;
+}
+
 function asyncHandler(
   handler: (
     request: Request,
@@ -66,381 +107,680 @@ function asyncHandler(
   };
 }
 
-router.get("/health", asyncHandler(async (_request, response) => {
-  await checkDatabaseConnection();
-  response.json({ status: "ok" });
-}));
+async function refreshInstagramStatuses(): Promise<void> {
+  const expiredIntegrations = await store.refreshExpiredIntegrations();
 
-router.post("/auth/login", asyncHandler(async (request, response) => {
-  const result = loginSchema.safeParse(request.body);
-
-  if (!result.success) {
-    return sendError(
-      response,
-      400,
-      "VALIDATION_ERROR",
-      "メールアドレスとパスワードを確認してください。",
-      result.error.issues.map((issue) => ({
-        field: issue.path.join("."),
-        reason: issue.code,
-      })),
-    );
+  for (const integration of expiredIntegrations) {
+    sendMockNotification({
+      eventType: "instagram.reauthorization_required",
+      channel: "audit",
+      message: `${integration.accountName} のトークンが期限切れになりました。`,
+      metadata: {
+        accountId: integration.accountId,
+        status: integration.status,
+        tokenExpiresAt: integration.tokenExpiresAt,
+      },
+    });
   }
+}
 
-  const authUser = await authenticateUser(result.data.email, result.data.password);
+router.get(
+  "/health",
+  asyncHandler(async (_request, response) => {
+    await checkDatabaseConnection();
+    response.json({ status: "ok" });
+  }),
+);
 
-  if (!authUser) {
-    return sendError(
-      response,
-      401,
-      "AUTH_EXPIRED",
-      "メールアドレスまたはパスワードが正しくありません。",
+router.post(
+  "/auth/login",
+  asyncHandler(async (request, response) => {
+    const result = loginSchema.safeParse(request.body);
+
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "メールアドレスとパスワードを確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+
+    const authUser = await authenticateUser(
+      result.data.email,
+      result.data.password,
     );
-  }
 
-  await recordAuditLog({
-    action: "auth.login",
-    resourceType: "user",
-    resourceId: authUser.id,
-    metadata: {
-      email: authUser.email,
-      requestId: request.requestId,
-    },
-    actorKey: authUser.id,
-  });
+    if (!authUser) {
+      return sendError(
+        response,
+        401,
+        "AUTH_EXPIRED",
+        "メールアドレスまたはパスワードが正しくありません。",
+      );
+    }
 
-  response.json({
-    accessToken: createAccessToken(authUser),
-    expiresIn: getAccessTokenExpiresInSeconds(),
-    user: authUser,
-  });
-}));
+    await recordAuditLog({
+      action: "auth.login",
+      resourceType: "user",
+      resourceId: authUser.id,
+      metadata: {
+        email: authUser.email,
+        requestId: request.requestId,
+      },
+      actorKey: authUser.id,
+    });
 
-router.get("/local/mocks/status", asyncHandler(async (_request, response) => {
-  response.json({
-    modes: getMockModes(),
-    redis: getRedisConnectionInfo(),
-  });
-}));
+    response.json({
+      accessToken: createAccessToken(authUser),
+      expiresIn: getAccessTokenExpiresInSeconds(),
+      user: authUser,
+    });
+  }),
+);
 
-router.get("/local/dependencies/redis", asyncHandler(async (_request, response) => {
-  const ping = await checkRedisConnection();
-  response.json({
-    status: "ok",
-    ping,
-    redis: getRedisConnectionInfo(),
-  });
-}));
+router.get(
+  "/local/mocks/status",
+  asyncHandler(async (_request, response) => {
+    response.json({
+      modes: getMockModes(),
+      redis: getRedisConnectionInfo(),
+    });
+  }),
+);
 
-router.get("/local/oauth/start", asyncHandler(async (_request, response) => {
-  response.json(createMockOAuthStart());
-}));
+router.get(
+  "/local/dependencies/redis",
+  asyncHandler(async (_request, response) => {
+    const ping = await checkRedisConnection();
+    response.json({
+      status: "ok",
+      ping,
+      redis: getRedisConnectionInfo(),
+    });
+  }),
+);
 
-router.get("/local/oauth/callback", asyncHandler(async (request, response) => {
-  const result = completeMockOAuthCallback({
-    code: typeof request.query.code === "string" ? request.query.code : undefined,
-    state: typeof request.query.state === "string" ? request.query.state : undefined,
-    scenario: typeof request.query.scenario === "string" ? request.query.scenario : undefined,
-  });
+router.get(
+  "/local/oauth/start",
+  asyncHandler(async (_request, response) => {
+    response.json(createMockOAuthStart());
+  }),
+);
 
-  if (!result.ok) {
-    return sendError(
-      response,
-      result.status,
-      result.code,
-      result.message,
-      result.details,
-    );
-  }
+router.get(
+  "/local/oauth/callback",
+  asyncHandler(async (request, response) => {
+    const result = completeMockOAuthCallback({
+      code:
+        typeof request.query.code === "string" ? request.query.code : undefined,
+      state:
+        typeof request.query.state === "string"
+          ? request.query.state
+          : undefined,
+      scenario:
+        typeof request.query.scenario === "string"
+          ? request.query.scenario
+          : undefined,
+    });
 
-  response.json(result);
-}));
+    if (!result.ok) {
+      return sendError(
+        response,
+        result.status,
+        result.code,
+        result.message,
+        result.details,
+      );
+    }
 
-router.get("/local/instagram/accounts", asyncHandler(async (request, response) => {
-  const scenario =
-    typeof request.query.scenario === "string"
-      ? request.query.scenario
-      : undefined;
+    response.json(result);
+  }),
+);
 
-  response.json({
-    items: getMockInstagramAccounts(scenario),
-  });
-}));
+router.get(
+  "/auth/instagram/callback",
+  asyncHandler(async (request, response) => {
+    const result = await finalizeInstagramOAuthCallback({
+      code:
+        typeof request.query.code === "string" ? request.query.code : undefined,
+      state:
+        typeof request.query.state === "string"
+          ? request.query.state
+          : undefined,
+      scenario:
+        typeof request.query.scenario === "string"
+          ? request.query.scenario
+          : undefined,
+    });
 
-router.post("/local/instagram/publish", asyncHandler(async (request, response) => {
-  const scenario =
-    typeof request.body?.scenario === "string"
-      ? request.body.scenario
-      : undefined;
-  const publishResult = publishToMockInstagram(scenario);
+    if (!result.ok) {
+      return sendError(response, result.status, result.code, result.message);
+    }
 
-  if (!publishResult.ok) {
-    return sendError(
-      response,
-      publishResult.status,
-      publishResult.error.code,
-      publishResult.error.message,
-    );
-  }
+    response.redirect(result.redirectUrl);
+  }),
+);
 
-  response.status(201).json(publishResult);
-}));
+router.get(
+  "/local/instagram/accounts",
+  asyncHandler(async (request, response) => {
+    const scenario =
+      typeof request.query.scenario === "string"
+        ? request.query.scenario
+        : undefined;
 
-router.post("/local/notifications/test", asyncHandler(async (request, response) => {
-  const result = notificationSchema.safeParse(request.body);
+    response.json({
+      items: getMockInstagramAccounts(scenario),
+    });
+  }),
+);
 
-  if (!result.success) {
-    return sendError(
-      response,
-      400,
-      "VALIDATION_ERROR",
-      "通知ペイロードを確認してください。",
-      result.error.issues.map((issue) => ({
-        field: issue.path.join("."),
-        reason: issue.code,
-      })),
-    );
-  }
+router.post(
+  "/local/instagram/publish",
+  asyncHandler(async (request, response) => {
+    const scenario =
+      typeof request.body?.scenario === "string"
+        ? request.body.scenario
+        : undefined;
+    const publishResult = publishToMockInstagram(scenario);
 
-  response.status(202).json(sendMockNotification(result.data));
-}));
+    if (!publishResult.ok) {
+      return sendError(
+        response,
+        publishResult.status,
+        publishResult.error.code,
+        publishResult.error.message,
+      );
+    }
+
+    response.status(201).json(publishResult);
+  }),
+);
+
+router.post(
+  "/local/notifications/test",
+  asyncHandler(async (request, response) => {
+    const result = notificationSchema.safeParse(request.body);
+
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "通知ペイロードを確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+
+    response.status(202).json(sendMockNotification(result.data));
+  }),
+);
 
 router.use(requireAuth);
 
-router.get("/auth/me", asyncHandler(async (request, response) => {
-  response.json({ user: request.authUser });
-}));
+router.get(
+  "/auth/me",
+  asyncHandler(async (request, response) => {
+    response.json({ user: request.authUser });
+  }),
+);
 
-router.post("/auth/logout", asyncHandler(async (request, response) => {
-  if (request.authUser) {
-    await recordAuditLog({
-      action: "auth.logout",
-      resourceType: "user",
-      resourceId: request.authUser.id,
-      metadata: {
-        email: request.authUser.email,
-        requestId: request.requestId,
-      },
-      actorKey: request.authUser.id,
+router.post(
+  "/auth/logout",
+  asyncHandler(async (request, response) => {
+    if (request.authUser) {
+      await recordAuditLog({
+        action: "auth.logout",
+        resourceType: "user",
+        resourceId: request.authUser.id,
+        metadata: {
+          email: request.authUser.email,
+          requestId: request.requestId,
+        },
+        actorKey: request.authUser.id,
+      });
+    }
+
+    response.json({ success: true });
+  }),
+);
+
+router.post(
+  "/testing/integrations/instagram/reset",
+  asyncHandler(async (_request, response) => {
+    if (!assertTestingRouteEnabled(response)) {
+      return;
+    }
+
+    await store.resetInstagramIntegrationsForTesting();
+    response.status(204).send();
+  }),
+);
+
+router.post(
+  "/testing/integrations/instagram/expire",
+  asyncHandler(async (request, response) => {
+    if (!assertTestingRouteEnabled(response)) {
+      return;
+    }
+
+    const result = instagramTestingExpireSchema.safeParse(request.body);
+
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "期限切れテストパラメータを確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+
+    await store.expireInstagramIntegrationForTesting(result.data.accountId);
+    response.status(204).send();
+  }),
+);
+
+router.get(
+  "/auth/instagram/oauth-url",
+  asyncHandler(async (request, response) => {
+    const result = instagramOAuthStartSchema.safeParse({
+      intent: request.query.intent,
+      scenario: request.query.scenario,
     });
-  }
 
-  response.json({ success: true });
-}));
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "OAuth 開始パラメータを確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
 
-router.get("/integrations/instagram/status", asyncHandler(async (_request, response) => {
-  const status = await store.getIntegrationStatus();
-  if (!status) {
-    return sendError(
-      response,
-      404,
-      "RESOURCE_NOT_FOUND",
-      "連携情報が見つかりません。",
+    const oauth = createInstagramOAuthSession({
+      actorKey: request.authUser?.id ?? "user_demo",
+      intent: result.data.intent,
+      scenario: result.data.scenario,
+    });
+
+    response.json(oauth);
+  }),
+);
+
+router.get(
+  "/integrations/instagram/oauth-sessions/:oauthSessionId",
+  asyncHandler(async (request, response) => {
+    const session = getInstagramOAuthSession(
+      String(request.params.oauthSessionId),
+      request.authUser?.id ?? "user_demo",
     );
-  }
-  response.json(status);
-}));
 
-router.get("/media-assets", asyncHandler(async (_request, response) => {
-  response.json({ items: await store.getMediaAssets() });
-}));
+    if (!session) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "OAuth セッションが見つかりません。",
+      );
+    }
 
-router.get("/contents", asyncHandler(async (request, response) => {
-  const status =
-    typeof request.query.status === "string"
-      ? request.query.status.split(",")
-      : [];
-  const contentType =
-    typeof request.query.contentType === "string"
-      ? request.query.contentType.split(",")
-      : [];
-  const keyword =
-    typeof request.query.keyword === "string"
-      ? request.query.keyword
-      : undefined;
-  response.json({
-    items: await store.getContents({ keyword, status, contentType }),
-  });
-}));
+    response.json(session);
+  }),
+);
 
-router.post("/contents", asyncHandler(async (request, response) => {
-  const result = contentSchema.safeParse(request.body);
-  if (!result.success) {
-    return sendError(
-      response,
-      400,
-      "VALIDATION_ERROR",
-      "未入力の必須項目があります。入力してから再度お試しください。",
-      result.error.issues.map((issue) => ({
-        field: issue.path.join("."),
-        reason: issue.code,
-      })),
-    );
-  }
-  const actorKey = request.authUser?.name ?? "user_demo";
-  const created = await store.createContent(
-    {
-      ...result.data,
-      createdBy: actorKey,
-      updatedBy: actorKey,
-    },
-    { requestId: request.requestId },
-  );
-  response.status(201).json(created);
-}));
+router.post(
+  "/integrations/instagram/bootstrap-existing-token",
+  asyncHandler(async (request, response) => {
+    const session = await createInstagramExistingTokenSession({
+      actorKey: request.authUser?.id ?? "user_demo",
+    });
 
-router.put("/contents/:id", asyncHandler(async (request, response) => {
-  const result = contentSchema.partial().safeParse(request.body);
-  if (!result.success) {
-    return sendError(
-      response,
-      400,
-      "VALIDATION_ERROR",
-      "入力内容を確認してください。",
-      result.error.issues.map((issue) => ({
-        field: issue.path.join("."),
-        reason: issue.code,
-      })),
-    );
-  }
-  const updated = await store.updateContent(
-    String(request.params.id),
-    {
-      ...result.data,
-      updatedBy: request.authUser?.name ?? "user_demo",
-      createdBy: undefined,
-    },
-    { requestId: request.requestId },
-  );
-  if (!updated) {
-    return sendError(
-      response,
-      404,
-      "RESOURCE_NOT_FOUND",
-      "コンテンツが見つかりません。",
-    );
-  }
-  response.json(updated);
-}));
+    response.status(201).json(session);
+  }),
+);
 
-router.post("/contents/:id/duplicate", asyncHandler(async (request, response) => {
-  const duplicated = await store.duplicateContent(
-    String(request.params.id),
-    request.authUser?.name ?? "user_demo",
-    { requestId: request.requestId },
-  );
-  if (!duplicated) {
-    return sendError(
-      response,
-      404,
-      "RESOURCE_NOT_FOUND",
-      "コンテンツが見つかりません。",
-    );
-  }
-  response.status(201).json(duplicated);
-}));
+router.post(
+  "/integrations/instagram/connect",
+  asyncHandler(async (request, response) => {
+    const result = instagramConnectSchema.safeParse(request.body);
 
-router.post("/contents/:id/validate", asyncHandler(async (request, response) => {
-  const validation = await store.validateContent(String(request.params.id));
-  if (!validation) {
-    return sendError(
-      response,
-      404,
-      "RESOURCE_NOT_FOUND",
-      "コンテンツが見つかりません。",
-    );
-  }
-  response.json(validation);
-}));
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "連携確定パラメータを確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
 
-router.post("/schedules/validate", asyncHandler(async (request, response) => {
-  const result = scheduleSchema.safeParse(request.body);
-  if (!result.success) {
-    return sendError(
-      response,
-      400,
-      "VALIDATION_ERROR",
-      "入力内容を確認してください。",
-      result.error.issues.map((issue) => ({
-        field: issue.path.join("."),
-        reason: issue.code,
-      })),
+    const oauthSession = consumeInstagramOAuthSession(
+      result.data.oauthSessionId,
+      request.authUser?.id ?? "user_demo",
     );
-  }
-  response.json(await store.validateSchedule(result.data));
-}));
 
-router.post("/schedules", asyncHandler(async (request, response) => {
-  const result = scheduleSchema.safeParse(request.body);
-  if (!result.success) {
-    return sendError(
-      response,
-      400,
-      "VALIDATION_ERROR",
-      "入力内容を確認してください。",
-      result.error.issues.map((issue) => ({
-        field: issue.path.join("."),
-        reason: issue.code,
-      })),
+    if (!oauthSession) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "有効な OAuth セッションが見つかりません。",
+      );
+    }
+
+    const selectedAccount = oauthSession.accounts.find(
+      (account) => account.accountId === result.data.accountId,
     );
-  }
-  const validation = await store.validateSchedule(result.data);
-  if (!validation.valid) {
-    return sendError(
-      response,
-      409,
-      "CONFLICT",
-      validation.messages[0],
-      validation.messages.map((message) => ({
-        field: "publishAt",
-        reason: message,
-      })),
+
+    if (!selectedAccount) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "選択した Instagram アカウントが見つかりません。",
+      );
+    }
+
+    const integration = await store.upsertInstagramIntegration(
+      {
+        accountId: selectedAccount.accountId,
+        facebookPageId: selectedAccount.facebookPageId,
+        accountName: selectedAccount.accountName,
+        pageName: selectedAccount.pageName,
+        accessTokenEncrypted: encryptToken(oauthSession.accessToken),
+        tokenExpiresAt: oauthSession.tokenExpiresAt,
+        permissions: selectedAccount.permissions,
+        status: selectedAccount.status,
+      },
+      request.authUser?.id ?? "user_demo",
+      { requestId: request.requestId },
     );
-  }
-  response.status(201).json(
-    await store.createSchedule(
-      result.data,
+
+    response.status(201).json(integration);
+  }),
+);
+
+router.get(
+  "/integrations/instagram/status",
+  asyncHandler(async (_request, response) => {
+    await refreshInstagramStatuses();
+    const status = await store.getIntegrationStatus();
+    if (!status) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "連携情報が見つかりません。",
+      );
+    }
+    response.json(status);
+  }),
+);
+
+router.get(
+  "/media-assets",
+  asyncHandler(async (_request, response) => {
+    response.json({ items: await store.getMediaAssets() });
+  }),
+);
+
+router.get(
+  "/contents",
+  asyncHandler(async (request, response) => {
+    const status =
+      typeof request.query.status === "string"
+        ? request.query.status.split(",")
+        : [];
+    const contentType =
+      typeof request.query.contentType === "string"
+        ? request.query.contentType.split(",")
+        : [];
+    const keyword =
+      typeof request.query.keyword === "string"
+        ? request.query.keyword
+        : undefined;
+    response.json({
+      items: await store.getContents({ keyword, status, contentType }),
+    });
+  }),
+);
+
+router.post(
+  "/contents",
+  asyncHandler(async (request, response) => {
+    const result = contentSchema.safeParse(request.body);
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "未入力の必須項目があります。入力してから再度お試しください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+    const actorKey = request.authUser?.name ?? "user_demo";
+    const created = await store.createContent(
+      {
+        ...result.data,
+        createdBy: actorKey,
+        updatedBy: actorKey,
+      },
+      { requestId: request.requestId },
+    );
+    response.status(201).json(created);
+  }),
+);
+
+router.put(
+  "/contents/:id",
+  asyncHandler(async (request, response) => {
+    const result = contentSchema.partial().safeParse(request.body);
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "入力内容を確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+    const updated = await store.updateContent(
+      String(request.params.id),
+      {
+        ...result.data,
+        updatedBy: request.authUser?.name ?? "user_demo",
+        createdBy: undefined,
+      },
+      { requestId: request.requestId },
+    );
+    if (!updated) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "コンテンツが見つかりません。",
+      );
+    }
+    response.json(updated);
+  }),
+);
+
+router.post(
+  "/contents/:id/duplicate",
+  asyncHandler(async (request, response) => {
+    const duplicated = await store.duplicateContent(
+      String(request.params.id),
       request.authUser?.name ?? "user_demo",
       { requestId: request.requestId },
-    ),
-  );
-}));
-
-router.get("/calendar/events", asyncHandler(async (_request, response) => {
-  response.json({ items: await store.getCalendarEvents() });
-}));
-
-router.get("/dashboard/kpi", asyncHandler(async (_request, response) => {
-  response.json(await store.getDashboardKpi());
-}));
-
-router.get("/dashboard/alerts", asyncHandler(async (_request, response) => {
-  response.json({ items: await store.getDashboardAlerts() });
-}));
-
-router.get("/jobs/logs", asyncHandler(async (_request, response) => {
-  response.json({ items: await store.getJobLogs() });
-}));
-
-router.post("/jobs/:jobId/retry", asyncHandler(async (request, response) => {
-  const retried = await store.retryJob(
-    String(request.params.jobId),
-    request.authUser?.name ?? "user_demo",
-    { requestId: request.requestId },
-  );
-  if (!retried) {
-    return sendError(
-      response,
-      404,
-      "RESOURCE_NOT_FOUND",
-      "ジョブが見つかりません。",
     );
-  }
-  response.json(retried);
-}));
+    if (!duplicated) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "コンテンツが見つかりません。",
+      );
+    }
+    response.status(201).json(duplicated);
+  }),
+);
 
-router.get("/audit-logs", asyncHandler(async (_request, response) => {
-  response.json({ items: await store.getAuditLogs() });
-}));
+router.post(
+  "/contents/:id/validate",
+  asyncHandler(async (request, response) => {
+    const validation = await store.validateContent(String(request.params.id));
+    if (!validation) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "コンテンツが見つかりません。",
+      );
+    }
+    response.json(validation);
+  }),
+);
+
+router.post(
+  "/schedules/validate",
+  asyncHandler(async (request, response) => {
+    const result = scheduleSchema.safeParse(request.body);
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "入力内容を確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+    response.json(await store.validateSchedule(result.data));
+  }),
+);
+
+router.post(
+  "/schedules",
+  asyncHandler(async (request, response) => {
+    const result = scheduleSchema.safeParse(request.body);
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "入力内容を確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+    const validation = await store.validateSchedule(result.data);
+    if (!validation.valid) {
+      return sendError(
+        response,
+        409,
+        "CONFLICT",
+        validation.messages[0],
+        validation.messages.map((message) => ({
+          field: "publishAt",
+          reason: message,
+        })),
+      );
+    }
+    response
+      .status(201)
+      .json(
+        await store.createSchedule(
+          result.data,
+          request.authUser?.name ?? "user_demo",
+          { requestId: request.requestId },
+        ),
+      );
+  }),
+);
+
+router.get(
+  "/calendar/events",
+  asyncHandler(async (_request, response) => {
+    response.json({ items: await store.getCalendarEvents() });
+  }),
+);
+
+router.get(
+  "/dashboard/kpi",
+  asyncHandler(async (_request, response) => {
+    response.json(await store.getDashboardKpi());
+  }),
+);
+
+router.get(
+  "/dashboard/alerts",
+  asyncHandler(async (_request, response) => {
+    await refreshInstagramStatuses();
+    response.json({ items: await store.getDashboardAlerts() });
+  }),
+);
+
+router.get(
+  "/jobs/logs",
+  asyncHandler(async (_request, response) => {
+    response.json({ items: await store.getJobLogs() });
+  }),
+);
+
+router.post(
+  "/jobs/:jobId/retry",
+  asyncHandler(async (request, response) => {
+    const retried = await store.retryJob(
+      String(request.params.jobId),
+      request.authUser?.name ?? "user_demo",
+      { requestId: request.requestId },
+    );
+    if (!retried) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "ジョブが見つかりません。",
+      );
+    }
+    response.json(retried);
+  }),
+);
+
+router.get(
+  "/audit-logs",
+  asyncHandler(async (_request, response) => {
+    response.json({ items: await store.getAuditLogs() });
+  }),
+);
 
 export { router };

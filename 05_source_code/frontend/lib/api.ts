@@ -5,6 +5,7 @@ import type {
   DashboardAlert,
   DashboardKpi,
   InstagramIntegration,
+  InstagramOAuthSession,
   JobLog,
   MediaAsset,
   ScheduleValidationResult,
@@ -43,13 +44,14 @@ export const api = {
     email: string;
     password: string;
   }): Promise<{ accessToken: string; expiresIn: number; user: CurrentUser }> {
-    return apiFetch<{ accessToken: string; expiresIn: number; user: CurrentUser }>(
-      "/auth/login",
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
+    return apiFetch<{
+      accessToken: string;
+      expiresIn: number;
+      user: CurrentUser;
+    }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
   logout(): Promise<{ success: boolean }> {
@@ -62,6 +64,53 @@ export const api = {
 
   getIntegrationStatus(): Promise<InstagramIntegration> {
     return apiFetch<InstagramIntegration>("/integrations/instagram/status");
+  },
+
+  startInstagramOAuth(params: {
+    intent: "connect" | "reauthorize";
+    scenario?: string;
+  }): Promise<{
+    authorizeUrl: string;
+    callbackUrl: string;
+    state: string;
+    oauthSessionId: string;
+  }> {
+    const searchParams = new URLSearchParams({ intent: params.intent });
+    if (params.scenario) {
+      searchParams.set("scenario", params.scenario);
+    }
+
+    return apiFetch<{
+      authorizeUrl: string;
+      callbackUrl: string;
+      state: string;
+      oauthSessionId: string;
+    }>(`/auth/instagram/oauth-url?${searchParams.toString()}`);
+  },
+
+  getInstagramOAuthSession(sessionId: string): Promise<InstagramOAuthSession> {
+    return apiFetch<InstagramOAuthSession>(
+      `/integrations/instagram/oauth-sessions/${sessionId}`,
+    );
+  },
+
+  bootstrapInstagramWithExistingToken(): Promise<InstagramOAuthSession> {
+    return apiFetch<InstagramOAuthSession>(
+      "/integrations/instagram/bootstrap-existing-token",
+      {
+        method: "POST",
+      },
+    );
+  },
+
+  connectInstagram(payload: {
+    oauthSessionId: string;
+    accountId: string;
+  }): Promise<InstagramIntegration> {
+    return apiFetch<InstagramIntegration>("/integrations/instagram/connect", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
   getContents(): Promise<{ items: ContentItem[] }> {

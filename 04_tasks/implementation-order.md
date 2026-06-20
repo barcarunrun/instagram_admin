@@ -30,34 +30,33 @@
    - セッションまたはBearer Tokenの検証基盤を実装
    - 監査ログに必要な操作者識別子を採取できる状態にする
 
-5. **TASK-005 から TASK-010**: Instagramアカウント連携実装
-   - Facebook OAuth認可フローを実装
-   - Instagramビジネスアカウント、Facebookページ、権限状態を保存
-   - トークン期限監視、再認可導線、連携状態取得APIと連携画面UIを実装
+5. **TASK-005 から TASK-007**: Instagramアカウント連携実装
+   - 既存の access token / user id を前提に、連携状態の保持と期限監視を実装
+   - トークン期限監視、再認可導線、連携画面UIを実装
 
-6. **TASK-011**: アカウント連携受入テスト実装
+6. **TASK-007**: アカウント連携受入テスト実装
    - 連携成功、権限不足、トークン期限切れ、再認可復旧のシナリオをテスト化する
 
 ### Phase 2: コンテンツ管理基盤
 
 **目標**: 投稿データを下書きとして安全に保持し、投稿種別ごとの差異を吸収できるデータ構造を先に実装する。
 
-1. **TASK-011 から TASK-013**: メディア資産管理実装
+1. **TASK-008 から TASK-010**: メディア資産管理実装
    - 画像・動画アップロードAPIを実装
    - 形式、サイズ、尺、アスペクト比の検証を実装
    - asset 管理と再利用可能な保存方式を確立
 
-2. **TASK-014 から TASK-016**: 下書きコンテンツ管理実装
+2. **TASK-011 から TASK-013**: 下書きコンテンツ管理実装
    - コンテンツ作成、更新、一覧、複製、検索APIを実装
    - キャプション、ハッシュタグ、ラベル、バージョン履歴を管理
    - 監査対象となる主要変更イベントを記録
 
-3. **TASK-020 から TASK-026**: 投稿種別別作成支援実装
+3. **TASK-017 から TASK-023**: 投稿種別別作成支援実装
    - 画像フィード、動画フィード、カルーセル、リールの入力仕様を定義
    - 種別別必須項目チェックと正規化処理を実装
    - API追加種別に追従しやすいペイロード変換層を実装
 
-4. **TASK-017 から TASK-019、TASK-027**: UI / 受入テスト整備
+4. **TASK-014 から TASK-016、TASK-024**: UI / 受入テスト整備
    - コンテンツ一覧 / 編集 UI を実装する
    - 下書き管理受入テストと投稿種別対応受入テストを整備する
 
@@ -65,17 +64,17 @@
 
 **目標**: 下書きから実行までの基幹フローを完成させ、予約投稿の成功率を担保する。
 
-1. **TASK-028 から TASK-034**: 予約投稿管理実装
+1. **TASK-025 から TASK-031**: 予約投稿管理実装
    - 予約登録、予約検証、スケジュール変更、取消APIを実装
    - 過去日時、重複時間帯、連携状態の検証を実装
    - schedules と posting_jobs を生成するフローを実装
 
-2. **TASK-035 から TASK-037**: Scheduler / Worker 実装
+2. **TASK-032 から TASK-034**: Scheduler / Worker 実装
    - Redis またはDBベースのジョブ投入方式を実装
    - 時刻到達ジョブの取得、排他制御、実行状態遷移を実装
    - Instagram Graph API呼び出しと結果保存を実装
 
-3. **TASK-038 から TASK-043**: 再試行・障害回復実装
+3. **TASK-035 から TASK-040**: 再試行・障害回復実装
    - エラー分類、指数バックオフ、自動再試行を実装
    - 恒久エラーの action_required 化と手動再実行APIを実装
    - 失敗通知、再認可要求通知、運用ログ連携を実装
@@ -84,30 +83,30 @@
 
 **目標**: 日常運用に必要な画面を、バックエンドの完成順に沿って実装する。
 
-1. **TASK-046 から TASK-047**: 管理画面共通レイアウト / 可視化実装
+1. **TASK-043 から TASK-044**: 管理画面共通レイアウト / 可視化実装
    - 認証後ナビゲーション、一覧レイアウト、共通フォーム部品を実装
    - APIエラー表示、ローディング、権限切れ導線を共通化
    - ダッシュボード、カレンダーなどの可視化画面を実装
 
-2. **TASK-053**: 承認フローUI実装
+2. **TASK-050**: 承認フローUI実装
    - 承認フローを採用する場合に、申請・承認・差し戻し UI を追加する
 
-3. **TASK-061**: 通知 / 監査ログ設定画面UI実装
+3. **TASK-058**: 通知 / 監査ログ設定画面UI実装
    - 通知先設定、通知種別切替、監査ログ検索条件入力を行う UI を実装する
 
 ### Phase 5: 品質保証とリリース準備
 
 **目標**: 本番運用で事故になりやすい箇所を優先して検証し、リリース判断可能な状態まで仕上げる。
 
-1. **TASK-063**: API・Worker単体テスト実装
+1. **TASK-060**: API・Worker単体テスト実装
    - バリデーション、状態遷移、再試行ポリシーのテストを実装
    - Instagram API連携部分はモックまたは契約テストで担保
 
-2. **TASK-064**: E2E・運用シナリオテスト実装
+2. **TASK-061**: E2E・運用シナリオテスト実装
    - 連携、下書き作成、予約、投稿成功、投稿失敗復旧のE2Eを実装
    - 再認可、手動再実行、通知発火の回帰テストを整備
 
-3. **TASK-065 から TASK-067**: 性能・運用最適化
+3. **TASK-062 から TASK-064**: 性能・運用最適化
    - ジョブ滞留、同時投稿、一覧表示性能を測定して改善
    - ログ、メトリクス、アラート閾値、Runbookを本番運用向けに調整
    - リリースチェックリストとロールバック手順に反映
@@ -116,36 +115,35 @@
 
 TASK-001 → TASK-002 → TASK-003 → TASK-004
 TASK-004 → TASK-005 → TASK-006, TASK-007
-TASK-006, TASK-007 → TASK-008, TASK-028
-TASK-005, TASK-006, TASK-008, TASK-009 → TASK-010 → TASK-011
-TASK-003 → TASK-011 → TASK-012, TASK-013
-TASK-012, TASK-013 → TASK-014 → TASK-015, TASK-016, TASK-020
-TASK-020 → TASK-021 → TASK-022 → TASK-025
-TASK-021 → TASK-023, TASK-024
-TASK-015 → TASK-017
-TASK-014, TASK-016 → TASK-018
-TASK-017, TASK-018 → TASK-019
-TASK-020, TASK-021, TASK-024 → TASK-026 → TASK-027
-TASK-014, TASK-006 → TASK-028 → TASK-029 → TASK-030, TASK-031, TASK-033
-TASK-031 → TASK-032
-TASK-031, TASK-032, TASK-033 → TASK-034
-TASK-029, TASK-003 → TASK-035 → TASK-036 → TASK-037
-TASK-036 → TASK-038 → TASK-039
-TASK-036, TASK-038 → TASK-040
-TASK-037, TASK-038 → TASK-041 → TASK-042
-TASK-039, TASK-040, TASK-042 → TASK-043
-TASK-037, TASK-033 → TASK-044 → TASK-045 → TASK-046
-TASK-033 → TASK-047
-TASK-044 → TASK-048
-TASK-046, TASK-047, TASK-048 → TASK-049
-TASK-014 → TASK-050 → TASK-051 → TASK-053
-TASK-028, TASK-051 → TASK-052 → TASK-054
-TASK-002, TASK-014, TASK-029, TASK-037 → TASK-055 → TASK-056
-TASK-003 → TASK-057 → TASK-058 → TASK-059
-TASK-044, TASK-057 → TASK-060
-TASK-056, TASK-057 → TASK-061
-TASK-059, TASK-060, TASK-061 → TASK-062
-TASK-043, TASK-049, TASK-062 → TASK-063 → TASK-064 → TASK-065 → TASK-066 → TASK-067
+TASK-006, TASK-007 → TASK-008, TASK-025
+TASK-003 → TASK-008 → TASK-009, TASK-010
+TASK-009, TASK-010 → TASK-011 → TASK-012, TASK-013, TASK-017
+TASK-017 → TASK-018 → TASK-019 → TASK-022
+TASK-018 → TASK-020, TASK-021
+TASK-012 → TASK-014
+TASK-011, TASK-013 → TASK-015
+TASK-014, TASK-015 → TASK-016
+TASK-017, TASK-018, TASK-021 → TASK-023 → TASK-024
+TASK-011, TASK-006 → TASK-025 → TASK-026 → TASK-027, TASK-028, TASK-030
+TASK-028 → TASK-029
+TASK-028, TASK-029, TASK-030 → TASK-031
+TASK-026, TASK-003 → TASK-032 → TASK-033 → TASK-034
+TASK-033 → TASK-035 → TASK-036
+TASK-033, TASK-035 → TASK-037
+TASK-034, TASK-035 → TASK-038 → TASK-039
+TASK-036, TASK-037, TASK-039 → TASK-040
+TASK-034, TASK-030 → TASK-041 → TASK-042 → TASK-043
+TASK-030 → TASK-044
+TASK-041 → TASK-045
+TASK-043, TASK-044, TASK-045 → TASK-046
+TASK-011 → TASK-047 → TASK-048 → TASK-050
+TASK-025, TASK-048 → TASK-049 → TASK-051
+TASK-002, TASK-011, TASK-026, TASK-034 → TASK-052 → TASK-053
+TASK-003 → TASK-054 → TASK-055 → TASK-056
+TASK-041, TASK-054 → TASK-057
+TASK-053, TASK-054 → TASK-058
+TASK-056, TASK-057, TASK-058 → TASK-059
+TASK-040, TASK-046, TASK-059 → TASK-060 → TASK-061 → TASK-062 → TASK-063 → TASK-064
 
 ## 実装優先度の考え方
 

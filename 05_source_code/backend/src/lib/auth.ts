@@ -54,7 +54,10 @@ function parseCookies(headerValue: string | undefined): Record<string, string> {
 
 function extractToken(request: Request): string | undefined {
   const authorization = request.header("authorization");
-  if (typeof authorization === "string" && authorization.startsWith("Bearer ")) {
+  if (
+    typeof authorization === "string" &&
+    authorization.startsWith("Bearer ")
+  ) {
     return authorization.slice("Bearer ".length).trim();
   }
 
