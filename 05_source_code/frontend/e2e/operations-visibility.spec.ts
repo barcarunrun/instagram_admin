@@ -53,7 +53,9 @@ test.describe("TASK-046 Operations visibility acceptance", () => {
     await expect(page.getByText("週次投稿本数", { exact: true })).toBeVisible();
     await expect(page.getByText("失敗件数", { exact: true })).toBeVisible();
     await expect(page.getByText("未実行件数", { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "直近の失敗ジョブ" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "直近の失敗ジョブ" }),
+    ).toBeVisible();
     await expect(page.getByText(seededContentTitle).first()).toBeVisible();
     await expect(
       page.getByText("投稿実行率が目標を下回る見込みです。"),

@@ -12,7 +12,7 @@ const reelAspectRatio = { min: 0.56, max: 0.8 };
 const maxImageFileSize = 8 * 1024 * 1024;
 const maxVideoFileSize = 100 * 1024 * 1024;
 
-const limits: Record<
+export const contentTypeRules: Record<
   ContentType,
   {
     minAssets: number;
@@ -159,12 +159,18 @@ function validateAssetByContentType(
 export function validateContentDraft(
   input: Pick<
     ContentItem,
-    "title" | "contentType" | "caption" | "hashtags" | "mediaAssetIds"
+    | "title"
+    | "contentType"
+    | "caption"
+    | "hashtags"
+    | "mediaAssetIds"
+    | "contentConfig"
   >,
   assets: MediaAsset[],
+  configAssets?: { coverAsset?: MediaAsset },
 ): ValidationSummary {
   const messages: ValidationMessage[] = [];
-  const rule = limits[input.contentType];
+  const rule = contentTypeRules[input.contentType];
   const requestedAssetCount = new Set(input.mediaAssetIds).size;
 
   if (!input.title.trim()) {
@@ -229,6 +235,53 @@ export function validateContentDraft(
       message: "存在しないメディア資産が含まれています。再選択してください。",
       level: "error",
     });
+  }
+
+  if (input.contentType === "carousel") {
+    const orderedMediaAssetIds = input.contentConfig.orderedMediaAssetIds;
+    if (orderedMediaAssetIds && orderedMediaAssetIds.length > 0) {
+      const hasSameCount = orderedMediaAssetIds.length === input.mediaAssetIds.length;
+      const hasSameItems = orderedMediaAssetIds.every((assetId) =>
+        input.mediaAssetIds.includes(assetId),
+      );
+
+      if (!hasSameCount || !hasSameItems) {
+        messages.push({
+          field: "contentConfig.orderedMediaAssetIds",
+          reason: "invalid_order",
+          message:
+            "カルーセル順序が選択済みメディアと一致しません。並び順を確認してください。",
+          level: "error",
+        });
+      }
+    }
+  }
+
+  if (input.contentType === "reel") {
+    const coverAssetId = input.contentConfig.coverAssetId?.trim();
+
+    if (!coverAssetId) {
+      messages.push({
+        field: "contentConfig.coverAssetId",
+        reason: "required",
+        message: "リールではカバー画像を指定してください。",
+        level: "error",
+      });
+    } else if (!configAssets?.coverAsset) {
+      messages.push({
+        field: "contentConfig.coverAssetId",
+        reason: "asset_not_found",
+        message: "指定されたカバー画像が見つかりません。再選択してください。",
+        level: "error",
+      });
+    } else if (configAssets.coverAsset.mediaType !== "image") {
+      messages.push({
+        field: "contentConfig.coverAssetId",
+        reason: "invalid_media_type",
+        message: "リールのカバー画像には画像メディアを指定してください。",
+        level: "error",
+      });
+    }
   }
 
   if (!rule.allowVideo && assets.some((asset) => asset.mediaType === "video")) {

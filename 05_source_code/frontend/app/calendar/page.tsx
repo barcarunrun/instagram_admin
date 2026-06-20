@@ -39,7 +39,11 @@ function getDefaultRange(view: CalendarView) {
   return { from: formatDateInput(start), to: formatDateInput(end) };
 }
 
-function getRange(searchParams?: { view?: CalendarView; from?: string; to?: string }) {
+function getRange(searchParams?: {
+  view?: CalendarView;
+  from?: string;
+  to?: string;
+}) {
   const view = searchParams?.view ?? "week";
   const defaults = getDefaultRange(view);
   const from = searchParams?.from ?? defaults.from;
@@ -70,12 +74,18 @@ function buildDayColumns(from: string, to: string) {
   return items;
 }
 
-function toneForStatus(status: string): "info" | "warning" | "critical" | "success" {
+function toneForStatus(
+  status: string,
+): "info" | "warning" | "critical" | "success" {
   if (status === "success" || status === "published") {
     return "success";
   }
 
-  if (status === "failed" || status === "action_required" || status === "reauthorization_required") {
+  if (
+    status === "failed" ||
+    status === "action_required" ||
+    status === "reauthorization_required"
+  ) {
     return "critical";
   }
 
@@ -163,7 +173,10 @@ export default async function CalendarPage(props: CalendarPageProps) {
           <button className="button" type="submit">
             表示を更新
           </button>
-          <Link className="secondary-button" href={`/dashboard?from=${range.from}&to=${range.to}`}>
+          <Link
+            className="secondary-button"
+            href={`/dashboard?from=${range.from}&to=${range.to}`}
+          >
             ダッシュボードへ
           </Link>
         </div>
@@ -187,10 +200,13 @@ export default async function CalendarPage(props: CalendarPageProps) {
                         <div>
                           <div className="failure-title">{event.title}</div>
                           <div className="failure-meta">
-                            {new Date(event.startsAt).toLocaleTimeString("ja-JP", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
+                            {new Date(event.startsAt).toLocaleTimeString(
+                              "ja-JP",
+                              {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              },
+                            )}
                           </div>
                         </div>
                         <StatusBadge tone={toneForStatus(event.status)}>

@@ -252,8 +252,13 @@ export const api = {
     });
   },
 
-  getDashboardKpi(range?: { from?: string; to?: string }): Promise<DashboardKpi> {
-    return apiFetch<DashboardKpi>(`/dashboard/kpi${createDashboardQuery(range)}`);
+  getDashboardKpi(range?: {
+    from?: string;
+    to?: string;
+  }): Promise<DashboardKpi> {
+    return apiFetch<DashboardKpi>(
+      `/dashboard/kpi${createDashboardQuery(range)}`,
+    );
   },
 
   getDashboardAlerts(range?: {

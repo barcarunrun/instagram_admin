@@ -73,7 +73,10 @@ export const serverApi = {
     return serverFetch<{ items: MediaAsset[] }>("/media-assets");
   },
 
-  getDashboardKpi(range?: { from?: string; to?: string }): Promise<DashboardKpi> {
+  getDashboardKpi(range?: {
+    from?: string;
+    to?: string;
+  }): Promise<DashboardKpi> {
     return serverFetch<DashboardKpi>(
       `/dashboard/kpi${createDashboardQuery(range)}`,
     );
