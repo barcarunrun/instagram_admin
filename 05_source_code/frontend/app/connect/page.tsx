@@ -2,10 +2,10 @@ import { AppShell } from "../../components/app-shell";
 import { Hero } from "../../components/hero";
 import { CheckCircleIcon, LinkIcon, WarningIcon } from "../../components/icons";
 import { StatusBadge } from "../../components/status-badge";
-import { api } from "../../lib/api";
+import { serverApi } from "../../lib/server-api";
 
 export default async function ConnectPage() {
-  const integration = await api.getIntegrationStatus();
+  const integration = await serverApi.getIntegrationStatus();
 
   return (
     <AppShell currentPath="/connect">

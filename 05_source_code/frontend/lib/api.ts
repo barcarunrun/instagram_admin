@@ -1,6 +1,7 @@
 import type {
   CalendarEvent,
   ContentItem,
+  CurrentUser,
   DashboardAlert,
   DashboardKpi,
   InstagramIntegration,
@@ -21,6 +22,7 @@ function getApiBase(): string {
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${getApiBase()}${path}`, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
@@ -37,6 +39,27 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  login(payload: {
+    email: string;
+    password: string;
+  }): Promise<{ accessToken: string; expiresIn: number; user: CurrentUser }> {
+    return apiFetch<{ accessToken: string; expiresIn: number; user: CurrentUser }>(
+      "/auth/login",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  logout(): Promise<{ success: boolean }> {
+    return apiFetch<{ success: boolean }>("/auth/logout", { method: "POST" });
+  },
+
+  getCurrentUser(): Promise<{ user: CurrentUser }> {
+    return apiFetch<{ user: CurrentUser }>("/auth/me");
+  },
+
   getIntegrationStatus(): Promise<InstagramIntegration> {
     return apiFetch<InstagramIntegration>("/integrations/instagram/status");
   },

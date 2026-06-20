@@ -1,8 +1,23 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { store } from "../domain/postgres-store.js";
+import { recordAuditLog, store } from "../domain/postgres-store.js";
+import {
+  authenticateUser,
+  createAccessToken,
+  getAccessTokenExpiresInSeconds,
+} from "../lib/auth.js";
+import { requireAuth } from "../lib/auth-middleware.js";
 import { checkDatabaseConnection } from "../lib/db.js";
 import { sendError } from "../lib/errors.js";
+import {
+  completeMockOAuthCallback,
+  createMockOAuthStart,
+  getMockInstagramAccounts,
+  getMockModes,
+  publishToMockInstagram,
+  sendMockNotification,
+} from "../lib/local-mocks.js";
+import { checkRedisConnection, getRedisConnectionInfo } from "../lib/redis.js";
 
 const router = Router();
 
@@ -27,6 +42,18 @@ const scheduleSchema = z.object({
   accountId: z.string().min(1),
 });
 
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
+const notificationSchema = z.object({
+  eventType: z.string().min(1),
+  channel: z.enum(["email", "chat", "audit"]),
+  message: z.string().min(1),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 function asyncHandler(
   handler: (
     request: Request,
@@ -42,6 +69,163 @@ function asyncHandler(
 router.get("/health", asyncHandler(async (_request, response) => {
   await checkDatabaseConnection();
   response.json({ status: "ok" });
+}));
+
+router.post("/auth/login", asyncHandler(async (request, response) => {
+  const result = loginSchema.safeParse(request.body);
+
+  if (!result.success) {
+    return sendError(
+      response,
+      400,
+      "VALIDATION_ERROR",
+      "メールアドレスとパスワードを確認してください。",
+      result.error.issues.map((issue) => ({
+        field: issue.path.join("."),
+        reason: issue.code,
+      })),
+    );
+  }
+
+  const authUser = await authenticateUser(result.data.email, result.data.password);
+
+  if (!authUser) {
+    return sendError(
+      response,
+      401,
+      "AUTH_EXPIRED",
+      "メールアドレスまたはパスワードが正しくありません。",
+    );
+  }
+
+  await recordAuditLog({
+    action: "auth.login",
+    resourceType: "user",
+    resourceId: authUser.id,
+    metadata: {
+      email: authUser.email,
+      requestId: request.requestId,
+    },
+    actorKey: authUser.id,
+  });
+
+  response.json({
+    accessToken: createAccessToken(authUser),
+    expiresIn: getAccessTokenExpiresInSeconds(),
+    user: authUser,
+  });
+}));
+
+router.get("/local/mocks/status", asyncHandler(async (_request, response) => {
+  response.json({
+    modes: getMockModes(),
+    redis: getRedisConnectionInfo(),
+  });
+}));
+
+router.get("/local/dependencies/redis", asyncHandler(async (_request, response) => {
+  const ping = await checkRedisConnection();
+  response.json({
+    status: "ok",
+    ping,
+    redis: getRedisConnectionInfo(),
+  });
+}));
+
+router.get("/local/oauth/start", asyncHandler(async (_request, response) => {
+  response.json(createMockOAuthStart());
+}));
+
+router.get("/local/oauth/callback", asyncHandler(async (request, response) => {
+  const result = completeMockOAuthCallback({
+    code: typeof request.query.code === "string" ? request.query.code : undefined,
+    state: typeof request.query.state === "string" ? request.query.state : undefined,
+    scenario: typeof request.query.scenario === "string" ? request.query.scenario : undefined,
+  });
+
+  if (!result.ok) {
+    return sendError(
+      response,
+      result.status,
+      result.code,
+      result.message,
+      result.details,
+    );
+  }
+
+  response.json(result);
+}));
+
+router.get("/local/instagram/accounts", asyncHandler(async (request, response) => {
+  const scenario =
+    typeof request.query.scenario === "string"
+      ? request.query.scenario
+      : undefined;
+
+  response.json({
+    items: getMockInstagramAccounts(scenario),
+  });
+}));
+
+router.post("/local/instagram/publish", asyncHandler(async (request, response) => {
+  const scenario =
+    typeof request.body?.scenario === "string"
+      ? request.body.scenario
+      : undefined;
+  const publishResult = publishToMockInstagram(scenario);
+
+  if (!publishResult.ok) {
+    return sendError(
+      response,
+      publishResult.status,
+      publishResult.error.code,
+      publishResult.error.message,
+    );
+  }
+
+  response.status(201).json(publishResult);
+}));
+
+router.post("/local/notifications/test", asyncHandler(async (request, response) => {
+  const result = notificationSchema.safeParse(request.body);
+
+  if (!result.success) {
+    return sendError(
+      response,
+      400,
+      "VALIDATION_ERROR",
+      "通知ペイロードを確認してください。",
+      result.error.issues.map((issue) => ({
+        field: issue.path.join("."),
+        reason: issue.code,
+      })),
+    );
+  }
+
+  response.status(202).json(sendMockNotification(result.data));
+}));
+
+router.use(requireAuth);
+
+router.get("/auth/me", asyncHandler(async (request, response) => {
+  response.json({ user: request.authUser });
+}));
+
+router.post("/auth/logout", asyncHandler(async (request, response) => {
+  if (request.authUser) {
+    await recordAuditLog({
+      action: "auth.logout",
+      resourceType: "user",
+      resourceId: request.authUser.id,
+      metadata: {
+        email: request.authUser.email,
+        requestId: request.requestId,
+      },
+      actorKey: request.authUser.id,
+    });
+  }
+
+  response.json({ success: true });
 }));
 
 router.get("/integrations/instagram/status", asyncHandler(async (_request, response) => {
@@ -93,7 +277,15 @@ router.post("/contents", asyncHandler(async (request, response) => {
       })),
     );
   }
-  const created = await store.createContent(result.data);
+  const actorKey = request.authUser?.name ?? "user_demo";
+  const created = await store.createContent(
+    {
+      ...result.data,
+      createdBy: actorKey,
+      updatedBy: actorKey,
+    },
+    { requestId: request.requestId },
+  );
   response.status(201).json(created);
 }));
 
@@ -111,7 +303,15 @@ router.put("/contents/:id", asyncHandler(async (request, response) => {
       })),
     );
   }
-  const updated = await store.updateContent(String(request.params.id), result.data);
+  const updated = await store.updateContent(
+    String(request.params.id),
+    {
+      ...result.data,
+      updatedBy: request.authUser?.name ?? "user_demo",
+      createdBy: undefined,
+    },
+    { requestId: request.requestId },
+  );
   if (!updated) {
     return sendError(
       response,
@@ -124,7 +324,11 @@ router.put("/contents/:id", asyncHandler(async (request, response) => {
 }));
 
 router.post("/contents/:id/duplicate", asyncHandler(async (request, response) => {
-  const duplicated = await store.duplicateContent(String(request.params.id));
+  const duplicated = await store.duplicateContent(
+    String(request.params.id),
+    request.authUser?.name ?? "user_demo",
+    { requestId: request.requestId },
+  );
   if (!duplicated) {
     return sendError(
       response,
@@ -193,7 +397,13 @@ router.post("/schedules", asyncHandler(async (request, response) => {
       })),
     );
   }
-  response.status(201).json(await store.createSchedule(result.data));
+  response.status(201).json(
+    await store.createSchedule(
+      result.data,
+      request.authUser?.name ?? "user_demo",
+      { requestId: request.requestId },
+    ),
+  );
 }));
 
 router.get("/calendar/events", asyncHandler(async (_request, response) => {
@@ -213,7 +423,11 @@ router.get("/jobs/logs", asyncHandler(async (_request, response) => {
 }));
 
 router.post("/jobs/:jobId/retry", asyncHandler(async (request, response) => {
-  const retried = await store.retryJob(String(request.params.jobId));
+  const retried = await store.retryJob(
+    String(request.params.jobId),
+    request.authUser?.name ?? "user_demo",
+    { requestId: request.requestId },
+  );
   if (!retried) {
     return sendError(
       response,

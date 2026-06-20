@@ -2,6 +2,11 @@
 
 ## 実装ロードマップ
 
+## タスク完了ゲート
+
+- 各 TASK-ID は、実装と関連ドキュメント更新に加えて、対象ブランチの push または PR 更新で GitHub Actions CI を起動した時点で完了候補とする。
+- 完了確定には、変更対象サービスの typecheck / lint / format:check と、.github/workflows/ci.yml の成功を確認する。
+
 ### Phase 1: 開発基盤と外部連携基盤
 
 **目標**: 管理画面、Application API、Worker が並行開発できる最小基盤を整え、Instagram連携の成立条件を先に固定する。

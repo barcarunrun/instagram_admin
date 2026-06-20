@@ -1,12 +1,12 @@
 import { AppShell } from "../../components/app-shell";
 import { ContentStudio } from "../../components/content-studio";
-import { api } from "../../lib/api";
+import { serverApi } from "../../lib/server-api";
 
 export default async function ContentsPage() {
   const [contents, mediaAssets, integration] = await Promise.all([
-    api.getContents(),
-    api.getMediaAssets(),
-    api.getIntegrationStatus(),
+    serverApi.getContents(),
+    serverApi.getMediaAssets(),
+    serverApi.getIntegrationStatus(),
   ]);
 
   return (

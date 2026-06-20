@@ -7,4 +7,5 @@ export type WorkerJob = {
 export type WorkerConfig = {
   concurrency: number;
   apiBaseUrl: string;
+  redisUrl: string;
 };
