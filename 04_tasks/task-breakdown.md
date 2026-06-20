@@ -24,6 +24,7 @@
 
 2. **TASK-002**: ローカル起動基盤の実装
    - 説明: frontend、backend、worker、PostgreSQL、Redis をローカルでまとめて起動できる開発用設定と起動スクリプトを整備する。
+   - 補足: 完了時点で PostgreSQL の schema / migration / seed 手順と、backend からの PostgreSQL 接続確認まで実装済み。
    - ステータス: 完了（2026-06-20）
    - ストーリーポイント: 5
    - 担当者: Platform

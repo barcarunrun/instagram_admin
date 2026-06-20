@@ -24,6 +24,7 @@ app.use(
     response: express.Response,
     _next: express.NextFunction,
   ) => {
+    void _next;
     console.error(error);
     return sendError(
       response,

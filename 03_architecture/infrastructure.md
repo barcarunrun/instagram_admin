@@ -38,6 +38,9 @@
 - フロントエンド、API、WorkerをDocker Composeで起動可能にする。
 - PostgreSQLとRedisはローカルコンテナを利用する。
 - Instagram APIはモックまたはSandbox設定で代替可能にする。
+- 起動入口は `05_source_code/scripts/local-stack.sh` を使用する。
+- DB 初期化、migration、seed は `05_source_code/scripts/local-db.sh` を使用する。
+- backend はローカル MVP では PostgreSQL を参照し、初期確認は seed データを前提に行う。
 
 ## デプロイメント
 
