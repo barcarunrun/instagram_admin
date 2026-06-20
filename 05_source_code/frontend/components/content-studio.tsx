@@ -95,8 +95,6 @@ export function ContentStudio({
         .filter(Boolean),
       mediaAssetIds: form.mediaAssetIds,
       approvalStatus: "approved" as const,
-      createdBy: "user_demo",
-      updatedBy: "user_demo",
     };
   }
 

@@ -1,10 +1,10 @@
 import { AppShell } from "../../components/app-shell";
 import { Hero } from "../../components/hero";
 import { JobLogPanel } from "../../components/job-log-panel";
-import { api } from "../../lib/api";
+import { serverApi } from "../../lib/server-api";
 
 export default async function LogsPage() {
-  const logs = await api.getJobLogs();
+  const logs = await serverApi.getJobLogs();
 
   return (
     <AppShell currentPath="/logs">

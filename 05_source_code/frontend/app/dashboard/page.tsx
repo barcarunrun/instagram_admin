@@ -9,15 +9,15 @@ import {
   WarningIcon,
 } from "../../components/icons";
 import { StatusBadge } from "../../components/status-badge";
-import { api } from "../../lib/api";
+import { serverApi } from "../../lib/server-api";
 
 export default async function DashboardPage() {
   const [kpi, alerts, events, logs, contents] = await Promise.all([
-    api.getDashboardKpi(),
-    api.getDashboardAlerts(),
-    api.getCalendarEvents(),
-    api.getJobLogs(),
-    api.getContents(),
+    serverApi.getDashboardKpi(),
+    serverApi.getDashboardAlerts(),
+    serverApi.getCalendarEvents(),
+    serverApi.getJobLogs(),
+    serverApi.getContents(),
   ]);
 
   const bars = [

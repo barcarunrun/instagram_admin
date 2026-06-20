@@ -42,8 +42,10 @@ POSTGRES_PASSWORD=instagram
 POSTGRES_PORT=5432
 REDIS_PORT=6379
 BACKEND_PORT=4000
-FRONTEND_PORT=3000
+FRONTEND_PORT=3100
 WORKER_CONCURRENCY=1
+JWT_SECRET=local-dev-jwt-secret
+ACCESS_TOKEN_EXPIRES_IN=3600
 ```
 
 ## 起動
@@ -102,10 +104,94 @@ curl http://localhost:4000/api/health
 {"status":"ok"}
 ```
 
+Redis 接続確認:
+
+```bash
+curl http://localhost:4000/api/local/dependencies/redis
+```
+
+期待値:
+
+```json
+{"status":"ok","ping":"PONG"}
+```
+
 frontend 確認先:
 
-- http://localhost:3000
-- http://localhost:3000/dashboard
+- http://localhost:3100
+- http://localhost:3100/login
+- http://localhost:3100/dashboard
+
+ローカルログイン:
+
+- メールアドレス: `demo@example.com`
+- パスワード: `LocalPass123!`
+
+## 外部依存モック確認
+
+backend には TASK-003 用のローカル mock ルートを含めています。既定では `infra/.env` の mode が `mock` / `log` になっているため、そのまま検証できます。
+
+mock mode の確認:
+
+```bash
+curl http://localhost:4000/api/local/mocks/status
+```
+
+OAuth 開始相当 URL の取得:
+
+```bash
+curl http://localhost:4000/api/local/oauth/start
+```
+
+正常系 callback 確認:
+
+```bash
+curl "http://localhost:4000/api/local/oauth/callback?code=mock_auth_code&state=mock_state_demo"
+```
+
+state 不一致確認:
+
+```bash
+curl "http://localhost:4000/api/local/oauth/callback?code=mock_auth_code&state=invalid_state"
+```
+
+Instagram 候補アカウント取得:
+
+```bash
+curl http://localhost:4000/api/local/instagram/accounts
+```
+
+Instagram 権限不足シナリオ取得:
+
+```bash
+curl "http://localhost:4000/api/local/instagram/accounts?scenario=permission_denied"
+```
+
+投稿成功シナリオ確認:
+
+```bash
+curl -X POST http://localhost:4000/api/local/instagram/publish \
+	-H 'Content-Type: application/json' \
+	-d '{"scenario":"success"}'
+```
+
+投稿認証期限切れシナリオ確認:
+
+```bash
+curl -X POST http://localhost:4000/api/local/instagram/publish \
+	-H 'Content-Type: application/json' \
+	-d '{"scenario":"auth_expired"}'
+```
+
+通知スタブ確認:
+
+```bash
+curl -X POST http://localhost:4000/api/local/notifications/test \
+	-H 'Content-Type: application/json' \
+	-d '{"eventType":"post_failed","channel":"chat","message":"mock notification"}'
+```
+
+通知スタブは backend ログへ構造化出力されます。TASK-057 までは実送信ではなくログ出力による確認を前提とします。
 
 ## Migration と Seed
 
@@ -203,4 +289,6 @@ cd /Users/eiichisugiyama/Desktop/job/instagram_development/05_source_code/worker
 
 - backend は PostgreSQL を参照する実装へ切り替わっています。起動前に `./scripts/local-db.sh bootstrap` で migration と seed を投入してください。
 - frontend はブラウザ向けに `NEXT_PUBLIC_API_BASE_URL`、SSR 向けに `SERVER_API_BASE_URL` を使い分けます。
-- worker は現時点では起動確認用の最小実装です。
+- worker は現時点では Redis ping を含む起動確認用の最小実装です。
+- OAuth / Instagram / Notification の mock はローカル検証専用です。実連携実装時は対応タスクで real 実装へ差し替えてください。
+- TASK-004 の認証は JWT ベースです。local stack では backend に `JWT_SECRET` を注入し、frontend は login 後の cookie で保護 API を呼び出します。

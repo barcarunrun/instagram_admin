@@ -43,6 +43,7 @@ npm run dev
 開発サーバー起動後、以下にアクセスします。
 
 - `http://localhost:3000`
+- `http://localhost:3000/login`
 - `http://localhost:3000/dashboard`
 
 その他のコマンド:
@@ -85,8 +86,17 @@ frontend/
 ## 実装メモ
 
 - API呼び出しは `lib/api.ts` に集約されています。
+- サーバーコンポーネントからの保護 API 呼び出しは `lib/server-api.ts` を利用し、JWT cookie を backend へ転送します。
 - `fetch` は `cache: "no-store"` で実行され、管理画面で常に最新状態を取得します。
 - 各ページは App Router のサーバーコンポーネントとして API を取得して描画します。
+
+## ローカルログイン
+
+- ログイン画面: `http://localhost:3000/login`
+- 初期ユーザー: `demo@example.com`
+- 初期パスワード: `LocalPass123!`
+
+ログイン後は frontend が JWT を cookie に保存し、backend の保護 API に対して認証付きでアクセスします。
 
 ## 関連
 

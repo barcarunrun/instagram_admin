@@ -126,3 +126,10 @@ export interface ScheduleValidationResult {
   valid: boolean;
   messages: string[];
 }
+
+export interface CurrentUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+}

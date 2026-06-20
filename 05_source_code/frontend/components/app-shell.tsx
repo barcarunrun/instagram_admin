@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ReactNode } from "react";
+import { serverApi } from "../lib/server-api";
 import { ContentIcon, DashboardIcon, LinkIcon, LogsIcon } from "./icons";
 import { TopbarAction } from "./topbar-action";
 
@@ -10,13 +11,23 @@ const navigation = [
   { href: "/logs", label: "実行ログ", icon: <LogsIcon /> },
 ];
 
-export function AppShell({
+function formatRole(role: string): string {
+  if (role === "platform_operator") {
+    return "運用マネージャー";
+  }
+
+  return role;
+}
+
+export async function AppShell({
   children,
   currentPath,
 }: {
   children: ReactNode;
   currentPath: string;
 }) {
+  const { user } = await serverApi.getCurrentUser();
+
   return (
     <div className="shell">
       <div className="shell-grid">
@@ -40,10 +51,10 @@ export function AppShell({
           </nav>
           <div className="sidebar-spacer" />
           <div className="sidebar-user">
-            <div className="user-avatar">佐藤</div>
+            <div className="user-avatar">{user.name.slice(0, 2)}</div>
             <div>
-              <div className="user-name">佐藤 美咲</div>
-              <div className="user-role">運用マネージャー</div>
+              <div className="user-name">{user.name}</div>
+              <div className="user-role">{formatRole(user.role)}</div>
             </div>
           </div>
         </aside>

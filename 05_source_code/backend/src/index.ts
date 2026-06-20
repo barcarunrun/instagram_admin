@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import { checkDatabaseConnection } from "./lib/db.js";
 import { sendError } from "./lib/errors.js";
+import { attachRequestContext } from "./lib/request-context.js";
 import { router } from "./routes/index.js";
 
 const app = express();
@@ -13,6 +14,7 @@ app.use(
     credentials: true,
   }),
 );
+app.use(attachRequestContext);
 app.use(express.json({ limit: "2mb" }));
 
 app.use("/api", router);

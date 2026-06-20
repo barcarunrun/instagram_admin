@@ -26,4 +26,8 @@ WORKER_CONCURRENCY=1
 API_BASE_URL=http://localhost:4000/api
 DATABASE_URL=postgresql://instagram:instagram@localhost:5432/instagram_ops
 REDIS_URL=redis://localhost:6379
+INSTAGRAM_API_MODE=mock
+NOTIFICATION_MODE=log
 ```
+
+起動時には Redis へ ping を行い、local stack 上で最低限の接続確認を実施します。

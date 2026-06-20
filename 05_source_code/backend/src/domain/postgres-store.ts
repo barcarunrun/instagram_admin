@@ -289,6 +289,22 @@ async function createAuditLog(
   );
 }
 
+export async function recordAuditLog(input: {
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  metadata: Record<string, string>;
+  actorKey?: string;
+}): Promise<void> {
+  await createAuditLog(
+    input.action,
+    input.resourceType,
+    input.resourceId,
+    input.metadata,
+    input.actorKey,
+  );
+}
+
 export const store = {
   async getIntegrationStatus(): Promise<InstagramIntegration | undefined> {
     const result = await pool.query<{
@@ -403,6 +419,7 @@ export const store = {
       ContentItem,
       "id" | "status" | "validation" | "createdAt" | "updatedAt" | "versions"
     >,
+    options?: { requestId?: string },
   ): Promise<ContentItem> {
     const actorUserId = await resolveActorUserId(input.createdBy);
     const assets = await getMediaAssetsByIds(input.mediaAssetIds);
@@ -463,7 +480,7 @@ export const store = {
         "content.created",
         "content",
         contentId,
-        { title: input.title },
+        { title: input.title, requestId: options?.requestId ?? "" },
         input.createdBy,
         client,
       );
@@ -487,6 +504,7 @@ export const store = {
   async updateContent(
     id: string,
     patch: Partial<ContentItem>,
+    options?: { requestId?: string },
   ): Promise<ContentItem | undefined> {
     const existing = await fetchContentById(id);
     if (!existing) {
@@ -567,7 +585,7 @@ export const store = {
         "content.updated",
         "content",
         id,
-        { title: merged.title },
+        { title: merged.title, requestId: options?.requestId ?? "" },
         merged.updatedBy,
         client,
       );
@@ -583,7 +601,11 @@ export const store = {
     return fetchContentById(id);
   },
 
-  async duplicateContent(id: string): Promise<ContentItem | undefined> {
+  async duplicateContent(
+    id: string,
+    actorKey: string = DEFAULT_ACTOR_KEY,
+    options?: { requestId?: string },
+  ): Promise<ContentItem | undefined> {
     const existing = await fetchContentById(id);
     if (!existing) {
       return undefined;
@@ -597,9 +619,9 @@ export const store = {
       labels: [...existing.labels],
       mediaAssetIds: [...existing.mediaAssetIds],
       approvalStatus: existing.approvalStatus,
-      createdBy: DEFAULT_ACTOR_KEY,
-      updatedBy: DEFAULT_ACTOR_KEY,
-    });
+      createdBy: actorKey,
+      updatedBy: actorKey,
+    }, options);
   },
 
   async validateContent(id: string): Promise<ContentItem["validation"] | undefined> {
@@ -697,7 +719,7 @@ export const store = {
     publishAt: string;
     timezone: string;
     accountId: string;
-  }): Promise<{
+  }, actorKey: string = DEFAULT_ACTOR_KEY, options?: { requestId?: string }): Promise<{
     id: string;
     contentId: string;
     accountId: string;
@@ -708,7 +730,7 @@ export const store = {
     createdAt: string;
     updatedAt: string;
   }> {
-    const actorUserId = await resolveActorUserId(DEFAULT_ACTOR_KEY);
+    const actorUserId = await resolveActorUserId(actorKey);
     const integrationResult = await pool.query<{ id: string }>(
       `
         select id
@@ -778,8 +800,8 @@ export const store = {
         "schedule.created",
         "schedule",
         scheduleId,
-        { contentId: input.contentId },
-        DEFAULT_ACTOR_KEY,
+        { contentId: input.contentId, requestId: options?.requestId ?? "" },
+        actorKey,
         client,
       );
 
@@ -807,7 +829,7 @@ export const store = {
       publishAt: input.publishAt,
       timezone: input.timezone,
       status: "scheduled",
-      createdBy: DEFAULT_ACTOR_KEY,
+      createdBy: actorKey,
       createdAt: toIso(scheduleRow?.created_at),
       updatedAt: toIso(scheduleRow?.updated_at),
     };
@@ -943,7 +965,11 @@ export const store = {
     }));
   },
 
-  async retryJob(jobId: string): Promise<JobLog | undefined> {
+  async retryJob(
+    jobId: string,
+    actorKey: string = DEFAULT_ACTOR_KEY,
+    options?: { requestId?: string },
+  ): Promise<JobLog | undefined> {
     const client = await pool.connect();
 
     try {
@@ -990,8 +1016,8 @@ export const store = {
         "job.retried",
         "posting_job",
         row.id,
-        { contentId: row.content_id },
-        DEFAULT_ACTOR_KEY,
+        { contentId: row.content_id, requestId: options?.requestId ?? "" },
+        actorKey,
         client,
       );
 

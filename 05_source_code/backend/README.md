@@ -31,6 +31,13 @@ PORT=4000
 CORS_ORIGIN=http://localhost:3000
 DATABASE_URL=postgresql://instagram:instagram@localhost:5432/instagram_ops
 REDIS_URL=redis://localhost:6379
+JWT_SECRET=local-dev-jwt-secret
+ACCESS_TOKEN_EXPIRES_IN=3600
+INSTAGRAM_API_MODE=mock
+OAUTH_MODE=mock
+NOTIFICATION_MODE=log
+MOCK_OAUTH_CALLBACK_URL=http://localhost:4000/api/local/oauth/callback
+MOCK_OAUTH_EXPECTED_STATE=mock_state_demo
 ```
 
 ## 実行コマンド
@@ -56,6 +63,9 @@ npm run typecheck
 ベースパスは `/api` です。
 
 - `GET /health`: ヘルスチェック
+- `POST /auth/login`: ローカルログイン
+- `GET /auth/me`: 現在ユーザー取得
+- `POST /auth/logout`: ログアウト監査イベント記録
 - `GET /integrations/instagram/status`: Instagram連携状態の取得
 - `GET /media-assets`: メディアアセット一覧の取得
 - `GET /contents`: コンテンツ一覧の取得
@@ -71,6 +81,23 @@ npm run typecheck
 - `GET /jobs/logs`: 投稿ジョブログ取得
 - `POST /jobs/:jobId/retry`: ジョブ再実行
 - `GET /audit-logs`: 監査ログ取得
+
+ローカル外部依存モック:
+
+- `GET /local/mocks/status`: mock mode と callback URL の確認
+- `GET /local/dependencies/redis`: Redis 接続確認
+- `GET /local/oauth/start`: 認可開始相当の mock URL 生成
+- `GET /local/oauth/callback`: state / code 検証付き callback mock
+- `GET /local/instagram/accounts`: Instagram 候補アカウント mock
+- `POST /local/instagram/publish`: 投稿成功 / 認証切れ / 権限不足 mock
+- `POST /local/notifications/test`: 通知スタブをログ出力
+
+## ローカル認証
+
+- 初期ユーザー: `demo@example.com`
+- 初期パスワード: `LocalPass123!`
+- 保護 API は Authorization Bearer または `auth_token` cookie のどちらでも認証できます。
+- login API は JWT を返し、frontend は cookie に保存して管理画面から保護 API を呼び出します。
 
 ## 実装の前提
 

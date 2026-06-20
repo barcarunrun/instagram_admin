@@ -11,12 +11,13 @@ TRUNCATE TABLE
   users
 RESTART IDENTITY CASCADE;
 
-INSERT INTO users (id, email, name, role, created_at, updated_at)
+INSERT INTO users (id, email, name, role, password_hash, created_at, updated_at)
 VALUES (
   '11111111-1111-1111-1111-111111111111',
   'demo@example.com',
   'user_demo',
   'platform_operator',
+  crypt('LocalPass123!', gen_salt('bf', 10)),
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP
 );
