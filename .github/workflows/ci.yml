@@ -132,6 +132,52 @@ jobs:
           PLAYWRIGHT_DATABASE_URL: postgresql://instagram:instagram@localhost:5432/instagram_ops
         run: npx playwright test --config=playwright.config.mjs e2e/content-workflow.spec.ts
 
+  e2e-operations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: instagram
+          POSTGRES_PASSWORD: instagram
+          POSTGRES_DB: instagram_ops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U instagram -d instagram_ops"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            05_source_code/backend/package-lock.json
+            05_source_code/frontend/package-lock.json
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply schema and seed
+        run: |
+          PGPASSWORD=instagram psql postgresql://instagram:instagram@localhost:5432/instagram_ops -f 05_source_code/infra/schema.sql
+          PGPASSWORD=instagram psql postgresql://instagram:instagram@localhost:5432/instagram_ops -f 05_source_code/infra/seed.sql
+      - name: Install backend dependencies
+        working-directory: 05_source_code/backend
+        run: npm ci
+      - name: Install frontend dependencies
+        working-directory: 05_source_code/frontend
+        run: npm ci
+      - name: Install Playwright browser
+        working-directory: 05_source_code/frontend
+        run: npx playwright install --with-deps chromium
+      - name: Run TASK-046 acceptance tests
+        working-directory: 05_source_code/frontend
+        env:
+          PLAYWRIGHT_DATABASE_URL: postgresql://instagram:instagram@localhost:5432/instagram_ops
+        run: npx playwright test --config=playwright.config.mjs e2e/operations-visibility.spec.ts
+
   worker:
     runs-on: ubuntu-latest
     defaults:

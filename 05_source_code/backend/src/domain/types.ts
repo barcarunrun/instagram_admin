@@ -20,8 +20,26 @@ export type JobStatus =
   | "success"
   | "failed"
   | "retrying"
+  | "cancelled"
   | "action_required"
   | "reauthorization_required";
+
+export type JobErrorType =
+  | "auth"
+  | "validation"
+  | "rate_limit"
+  | "network"
+  | "unknown";
+
+export interface PostingJobQueueMessage {
+  jobId: string;
+  scheduleId: string;
+  contentId: string;
+  accountId: string;
+  publishAt: string;
+  retryCount: number;
+  triggeredBy: "scheduler" | "manual_retry";
+}
 
 export type ValidationMessageLevel = "info" | "warning" | "error";
 
@@ -69,6 +87,13 @@ export interface ContentVersion {
   summary: string;
 }
 
+export interface ContentConfig {
+  orderedMediaAssetIds?: string[];
+  coverAssetId?: string;
+  templateKey?: string;
+  settings?: Record<string, unknown>;
+}
+
 export interface ContentItem {
   id: string;
   title: string;
@@ -78,6 +103,7 @@ export interface ContentItem {
   hashtags: string[];
   labels: string[];
   mediaAssetIds: string[];
+  contentConfig: ContentConfig;
   validation: ValidationSummary;
   approvalStatus: "not_required" | "pending" | "approved" | "rejected";
   createdBy: string;
@@ -105,7 +131,7 @@ export interface JobLog {
   contentId: string;
   status: JobStatus;
   retryCount: number;
-  errorType?: "auth" | "validation" | "rate_limit" | "network";
+  errorType?: JobErrorType;
   errorCode?: string;
   errorMessage?: string;
   resolution?: string;
@@ -126,6 +152,7 @@ export interface DashboardKpi {
   postingExecutionRate: number;
   weeklyPostCount: number;
   failedCount: number;
+  unexecutedCount: number;
   actionRequiredCount: number;
 }
 
@@ -135,6 +162,22 @@ export interface DashboardAlert {
   title: string;
   description: string;
   link: string;
+}
+
+export interface DashboardReauthorizationAccount {
+  id: string;
+  accountId: string;
+  accountName: string;
+  status: IntegrationStatus;
+  tokenExpiresAt: string;
+}
+
+export interface DashboardSummary {
+  kpi: DashboardKpi;
+  alerts: DashboardAlert[];
+  failures: JobLog[];
+  unexecuted: ScheduleItem[];
+  reauthorizationAccounts: DashboardReauthorizationAccount[];
 }
 
 export interface CalendarEvent {

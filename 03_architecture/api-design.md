@@ -190,19 +190,61 @@ GET /api/contents?status=draft,scheduled&contentType=reel&keyword=新作
 
 **説明:** 予約可否（未来時刻、重複、連携状態）を事前検証
 
+### GET /api/schedules/content/{contentId}
+
+**説明:** 指定コンテンツに紐づく最新の有効な予約情報を取得
+
+### GET /api/schedules/{id}
+
+**説明:** 予約 ID を指定して予約詳細を取得
+
+### PUT /api/schedules/{id}
+
+**説明:** 既存の予約日時、タイムゾーン、公開先アカウントを更新
+
+**リクエスト:**
+```json
+{
+  "contentId": "content_456",
+  "publishAt": "2026-06-22T09:00:00Z",
+  "timezone": "Asia/Tokyo",
+  "accountId": "ig_12345"
+}
+```
+
+**補足:** `scheduled` 状態の予約のみ変更可能
+
+### DELETE /api/schedules/{id}
+
+**説明:** 既存予約を取り消す
+
+**補足:** `scheduled` または `failed` 状態で、公開結果未作成の予約のみ取消可能
+
 ### GET /api/calendar/events
 
 **説明:** カレンダー表示用イベントを取得
 
+**クエリ:** `from`, `to`（いずれも ISO 8601、任意）
+
 ### GET /api/dashboard/kpi
 
 **説明:** ダッシュボード用KPIを取得
+
+**クエリ:** `from`, `to`（いずれも ISO 8601、任意）
 
 ### GET /api/dashboard/alerts
 
 **説明:** 要対応ジョブ、再認可対象、失敗投稿などのアラート一覧を取得
 
 **補足:** トークン期限切れ、権限不足、期限7日以内のアカウントを含む
+
+**クエリ:** `from`, `to`（いずれも ISO 8601、任意）
+
+### GET /api/dashboard/summary
+
+**説明:** 期間指定で KPI、失敗一覧、未実行一覧、要再認可アカウントをまとめて取得
+
+**クエリ:** `from`, `to`（いずれも ISO 8601、任意）
 
 ### GET /api/jobs/logs
 

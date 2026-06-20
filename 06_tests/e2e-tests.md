@@ -78,3 +78,16 @@ npm run test:e2e -- e2e/connect-workflow.spec.ts
 ## テスト結果レポート
 
 （テスト結果の保存先）
+
+## 投稿種別対応の自動化メモ
+
+- Playwright spec: 05_source_code/frontend/e2e/content-workflow.spec.ts
+- 追加対象: TC-206 カルーセル順序保存、TC-207 リールカバー必須、TC-208 拡張種別テンプレート保持
+- 実行コマンド: `cd 05_source_code/frontend && npm run test:e2e -- e2e/content-workflow.spec.ts`
+
+## 予約投稿の自動化メモ
+
+- Playwright spec: 05_source_code/frontend/e2e/content-workflow.spec.ts
+- 追加対象: TC-301 未来時刻予約、TC-302 過去日時エラー、TC-303 重複予約拒否、TC-304 予約取消、TC-305 予約更新
+- 実行コマンド: `cd 05_source_code/frontend && npm run test:e2e -- --grep "TC-301|TC-302|TC-303|TC-304|TC-305"`
+- テスト環境: frontend は 3100 番、backend は 4100 番で専用起動し、PostgreSQL / Redis はローカル compose を利用する
