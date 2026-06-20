@@ -8,7 +8,8 @@ import {
 } from "@playwright/test";
 
 const backendBaseUrl =
-  process.env.PLAYWRIGHT_BACKEND_ORIGIN ?? "http://localhost:4000";
+  process.env.PLAYWRIGHT_BACKEND_ORIGIN ??
+  `http://localhost:${process.env.PLAYWRIGHT_BACKEND_PORT ?? "4100"}`;
 const seededContentTitle = "新作シャツ_初夏コーデ_2026W25";
 const pngBase64 = `
 iVBORw0KGgoAAAANSUhEUgAAAUAAAAFACAIAAABC8jL9AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAIQ0lE
