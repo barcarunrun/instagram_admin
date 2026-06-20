@@ -234,6 +234,127 @@ function mapContentRow(
   };
 }
 
+function deriveIntegrationStatus(
+  status: InstagramIntegration["status"],
+  tokenExpiresAt: string | Date | null,
+): InstagramIntegration["status"] {
+  if (!tokenExpiresAt) {
+    return status;
+  }
+
+  return new Date(tokenExpiresAt).getTime() <= Date.now() ? "expired" : status;
+}
+
+function mapIntegrationRow(row: {
+  id: string;
+  instagram_account_id: string;
+  facebook_page_id: string;
+  account_name: string;
+  page_name: string;
+  status: InstagramIntegration["status"];
+  token_expires_at: string | Date | null;
+  permissions: string[] | null;
+  last_checked_at: string | Date | null;
+}): InstagramIntegration {
+  return {
+    id: row.id,
+    accountId: row.instagram_account_id,
+    facebookPageId: row.facebook_page_id,
+    accountName: row.account_name,
+    pageName: row.page_name,
+    status: deriveIntegrationStatus(row.status, row.token_expires_at),
+    tokenExpiresAt: toIso(row.token_expires_at),
+    permissions: toStringArray(row.permissions),
+    lastCheckedAt: toIso(row.last_checked_at),
+  };
+}
+
+async function refreshExpiredInstagramAccounts(): Promise<
+  InstagramIntegration[]
+> {
+  const result = await pool.query<{
+    id: string;
+    instagram_account_id: string;
+    facebook_page_id: string;
+    account_name: string;
+    page_name: string;
+    status: InstagramIntegration["status"];
+    token_expires_at: string | Date | null;
+    permissions: string[] | null;
+    last_checked_at: string | Date | null;
+  }>(
+    `
+      update instagram_accounts
+      set status = 'expired',
+        updated_at = current_timestamp,
+        last_checked_at = current_timestamp
+      where token_expires_at is not null
+        and token_expires_at <= current_timestamp
+        and status <> 'expired'
+      returning id, instagram_account_id, facebook_page_id, account_name,
+        page_name, status, token_expires_at, permissions, last_checked_at
+    `,
+  );
+
+  return result.rows.map(mapIntegrationRow);
+}
+
+async function getExpiringInstagramAccounts(
+  days: number,
+): Promise<InstagramIntegration[]> {
+  const result = await pool.query<{
+    id: string;
+    instagram_account_id: string;
+    facebook_page_id: string;
+    account_name: string;
+    page_name: string;
+    status: InstagramIntegration["status"];
+    token_expires_at: string | Date | null;
+    permissions: string[] | null;
+    last_checked_at: string | Date | null;
+  }>(
+    `
+      select id, instagram_account_id, facebook_page_id, account_name,
+        page_name, status, token_expires_at, permissions, last_checked_at
+      from instagram_accounts
+      where status = 'active'
+        and token_expires_at is not null
+        and token_expires_at > current_timestamp
+        and token_expires_at <= current_timestamp + ($1::int * interval '1 day')
+      order by token_expires_at asc
+    `,
+    [days],
+  );
+
+  return result.rows.map(mapIntegrationRow);
+}
+
+async function getReauthorizationInstagramAccounts(): Promise<
+  InstagramIntegration[]
+> {
+  const result = await pool.query<{
+    id: string;
+    instagram_account_id: string;
+    facebook_page_id: string;
+    account_name: string;
+    page_name: string;
+    status: InstagramIntegration["status"];
+    token_expires_at: string | Date | null;
+    permissions: string[] | null;
+    last_checked_at: string | Date | null;
+  }>(
+    `
+      select id, instagram_account_id, facebook_page_id, account_name,
+        page_name, status, token_expires_at, permissions, last_checked_at
+      from instagram_accounts
+      where status in ('expired', 'reauthorization_required')
+      order by token_expires_at asc nulls last, updated_at desc
+    `,
+  );
+
+  return result.rows.map(mapIntegrationRow);
+}
+
 async function fetchContents(rows: ContentRow[]): Promise<ContentItem[]> {
   const relations = await getContentRelations(rows.map((row) => row.id));
   return rows.map((row) => mapContentRow(row, relations));
@@ -306,7 +427,68 @@ export async function recordAuditLog(input: {
 }
 
 export const store = {
+  async refreshExpiredIntegrations(): Promise<InstagramIntegration[]> {
+    return refreshExpiredInstagramAccounts();
+  },
+
+  async resetInstagramIntegrationsForTesting(): Promise<void> {
+    await pool.query(
+      `
+        delete from publish_results
+        where posting_job_id in (
+          select pj.id
+          from posting_jobs pj
+          join schedules s on s.id = pj.schedule_id
+          join instagram_accounts ia on ia.id = s.instagram_account_id
+        )
+      `,
+    );
+    await pool.query(
+      `
+        delete from posting_jobs
+        where schedule_id in (
+          select s.id
+          from schedules s
+          join instagram_accounts ia on ia.id = s.instagram_account_id
+        )
+      `,
+    );
+    await pool.query(
+      `
+        delete from schedules
+        where instagram_account_id in (select id from instagram_accounts)
+      `,
+    );
+    await pool.query(
+      `
+        delete from instagram_accounts
+      `,
+    );
+  },
+
+  async expireInstagramIntegrationForTesting(
+    accountId?: string,
+  ): Promise<void> {
+    const values = accountId ? [accountId] : [];
+    const where = accountId
+      ? "where instagram_account_id = $1"
+      : "where instagram_account_id like 'ig_mock_%'";
+
+    await pool.query(
+      `
+        update instagram_accounts
+        set status = 'active',
+          token_expires_at = current_timestamp - interval '1 hour',
+          updated_at = current_timestamp,
+          last_checked_at = current_timestamp
+        ${where}
+      `,
+      values,
+    );
+  },
+
   async getIntegrationStatus(): Promise<InstagramIntegration | undefined> {
+    await refreshExpiredInstagramAccounts();
     const result = await pool.query<{
       id: string;
       instagram_account_id: string;
@@ -332,17 +514,92 @@ export const store = {
       return undefined;
     }
 
-    return {
-      id: row.id,
-      accountId: row.instagram_account_id,
-      facebookPageId: row.facebook_page_id,
-      accountName: row.account_name,
-      pageName: row.page_name,
-      status: row.status,
-      tokenExpiresAt: toIso(row.token_expires_at),
-      permissions: toStringArray(row.permissions),
-      lastCheckedAt: toIso(row.last_checked_at),
-    };
+    return mapIntegrationRow(row);
+  },
+
+  async upsertInstagramIntegration(
+    input: {
+      accountId: string;
+      facebookPageId: string;
+      accountName: string;
+      pageName: string;
+      accessTokenEncrypted: string;
+      tokenExpiresAt: string;
+      permissions: string[];
+      status: InstagramIntegration["status"];
+    },
+    actorKey: string = DEFAULT_ACTOR_KEY,
+    options?: { requestId?: string },
+  ): Promise<InstagramIntegration> {
+    const actorUserId = await resolveActorUserId(actorKey);
+    const result = await pool.query<{
+      id: string;
+      instagram_account_id: string;
+      facebook_page_id: string;
+      account_name: string;
+      page_name: string;
+      status: InstagramIntegration["status"];
+      token_expires_at: string | Date | null;
+      permissions: string[] | null;
+      last_checked_at: string | Date | null;
+    }>(
+      `
+        insert into instagram_accounts (
+          id, user_id, instagram_account_id, facebook_page_id, status,
+          access_token_encrypted, token_expires_at, created_at, updated_at,
+          account_name, page_name, permissions, last_checked_at
+        ) values (
+          $1::uuid, $2::uuid, $3, $4, $5, $6, $7::timestamp,
+          current_timestamp, current_timestamp, $8, $9, $10::jsonb,
+          current_timestamp
+        )
+        on conflict (instagram_account_id)
+        do update set
+          user_id = excluded.user_id,
+          facebook_page_id = excluded.facebook_page_id,
+          status = excluded.status,
+          access_token_encrypted = excluded.access_token_encrypted,
+          token_expires_at = excluded.token_expires_at,
+          updated_at = current_timestamp,
+          account_name = excluded.account_name,
+          page_name = excluded.page_name,
+          permissions = excluded.permissions,
+          last_checked_at = current_timestamp
+        returning id, instagram_account_id, facebook_page_id, account_name,
+          page_name, status, token_expires_at, permissions, last_checked_at
+      `,
+      [
+        createId("igacct"),
+        actorUserId,
+        input.accountId,
+        input.facebookPageId,
+        input.status,
+        input.accessTokenEncrypted,
+        input.tokenExpiresAt,
+        input.accountName,
+        input.pageName,
+        JSON.stringify(input.permissions),
+      ],
+    );
+
+    const integration = result.rows[0];
+    if (!integration) {
+      throw new Error("Failed to save Instagram integration.");
+    }
+
+    await createAuditLog(
+      "integration.instagram.upserted",
+      "instagram_account",
+      integration.id,
+      {
+        accountId: input.accountId,
+        status: input.status,
+        requestId: options?.requestId ?? "",
+      },
+      actorKey,
+    );
+
+    return mapIntegrationRow(integration);
   },
 
   async getContents(filters: {
@@ -561,7 +818,10 @@ export const store = {
         ],
       );
 
-      await client.query(`delete from content_media_assets where content_id = $1::uuid`, [id]);
+      await client.query(
+        `delete from content_media_assets where content_id = $1::uuid`,
+        [id],
+      );
 
       for (const [index, mediaAssetId] of merged.mediaAssetIds.entries()) {
         await client.query(
@@ -611,20 +871,25 @@ export const store = {
       return undefined;
     }
 
-    return this.createContent({
-      title: `${existing.title}_copy`,
-      contentType: existing.contentType,
-      caption: existing.caption,
-      hashtags: [...existing.hashtags],
-      labels: [...existing.labels],
-      mediaAssetIds: [...existing.mediaAssetIds],
-      approvalStatus: existing.approvalStatus,
-      createdBy: actorKey,
-      updatedBy: actorKey,
-    }, options);
+    return this.createContent(
+      {
+        title: `${existing.title}_copy`,
+        contentType: existing.contentType,
+        caption: existing.caption,
+        hashtags: [...existing.hashtags],
+        labels: [...existing.labels],
+        mediaAssetIds: [...existing.mediaAssetIds],
+        approvalStatus: existing.approvalStatus,
+        createdBy: actorKey,
+        updatedBy: actorKey,
+      },
+      options,
+    );
   },
 
-  async validateContent(id: string): Promise<ContentItem["validation"] | undefined> {
+  async validateContent(
+    id: string,
+  ): Promise<ContentItem["validation"] | undefined> {
     const content = await fetchContentById(id);
     if (!content) {
       return undefined;
@@ -650,28 +915,33 @@ export const store = {
     timezone: string;
     accountId: string;
   }): Promise<{ valid: boolean; messages: string[] }> {
+    await refreshExpiredInstagramAccounts();
     const messages: string[] = [];
-    const [integrationResult, contentResult, duplicateResult] = await Promise.all([
-      pool.query<{ status: InstagramIntegration["status"] }>(
-        `
-          select status
+    const [integrationResult, contentResult, duplicateResult] =
+      await Promise.all([
+        pool.query<{
+          status: InstagramIntegration["status"];
+          token_expires_at: string | Date | null;
+        }>(
+          `
+          select status, token_expires_at
           from instagram_accounts
           where instagram_account_id = $1
           limit 1
         `,
-        [input.accountId],
-      ),
-      pool.query<{ approval_status: ContentItem["approvalStatus"] }>(
-        `
+          [input.accountId],
+        ),
+        pool.query<{ approval_status: ContentItem["approvalStatus"] }>(
+          `
           select approval_status
           from contents
           where id = $1::uuid
           limit 1
         `,
-        [input.contentId],
-      ),
-      pool.query<{ id: string }>(
-        `
+          [input.contentId],
+        ),
+        pool.query<{ id: string }>(
+          `
           select s.id
           from schedules s
           join instagram_accounts ia on ia.id = s.instagram_account_id
@@ -680,14 +950,20 @@ export const store = {
             and s.publish_at = $3::timestamp
           limit 1
         `,
-        [input.contentId, input.accountId, input.publishAt],
-      ),
-    ]);
+          [input.contentId, input.accountId, input.publishAt],
+        ),
+      ]);
 
     const integration = integrationResult.rows[0];
     const content = contentResult.rows[0];
+    const integrationStatus = integration
+      ? deriveIntegrationStatus(
+          integration.status,
+          integration.token_expires_at,
+        )
+      : "expired";
 
-    if (!integration || integration.status !== "active") {
+    if (!integration || integrationStatus !== "active") {
       messages.push(
         "アカウント連携の有効期限が切れています。再連携してください。",
       );
@@ -714,12 +990,16 @@ export const store = {
     return { valid: messages.length === 0, messages };
   },
 
-  async createSchedule(input: {
-    contentId: string;
-    publishAt: string;
-    timezone: string;
-    accountId: string;
-  }, actorKey: string = DEFAULT_ACTOR_KEY, options?: { requestId?: string }): Promise<{
+  async createSchedule(
+    input: {
+      contentId: string;
+      publishAt: string;
+      timezone: string;
+      accountId: string;
+    },
+    actorKey: string = DEFAULT_ACTOR_KEY,
+    options?: { requestId?: string },
+  ): Promise<{
     id: string;
     contentId: string;
     accountId: string;
@@ -883,7 +1163,9 @@ export const store = {
           from posting_jobs
         `,
       ),
-      pool.query<{ count: string }>(`select count(*)::text as count from schedules`),
+      pool.query<{ count: string }>(
+        `select count(*)::text as count from schedules`,
+      ),
     ]);
     const jobRow = jobAggregate.rows[0] ?? {
       total: "0",
@@ -894,7 +1176,9 @@ export const store = {
     const total = Math.max(Number(jobRow.total), 1);
 
     return {
-      postingExecutionRate: Math.round((Number(jobRow.success_count) / total) * 100),
+      postingExecutionRate: Math.round(
+        (Number(jobRow.success_count) / total) * 100,
+      ),
       weeklyPostCount: Number(scheduleCount.rows[0]?.count ?? 0),
       failedCount: Number(jobRow.failed_count),
       actionRequiredCount: Number(jobRow.action_required_count),
@@ -902,8 +1186,13 @@ export const store = {
   },
 
   async getDashboardAlerts(): Promise<DashboardAlert[]> {
+    await refreshExpiredInstagramAccounts();
     const kpi = await this.getDashboardKpi();
     const alerts: DashboardAlert[] = [];
+    const [expiringAccounts, reauthorizationAccounts] = await Promise.all([
+      getExpiringInstagramAccounts(7),
+      getReauthorizationInstagramAccounts(),
+    ]);
 
     if (kpi.actionRequiredCount > 0) {
       alerts.push({
@@ -922,6 +1211,26 @@ export const store = {
         title: "投稿実行率が目標を下回る見込みです。",
         description: `今週の成功率は ${EXECUTION_RATE_ALERT_THRESHOLD}% を下回っています。`,
         link: "/dashboard",
+      });
+    }
+
+    if (reauthorizationAccounts.length > 0) {
+      const account = reauthorizationAccounts[0];
+      alerts.push({
+        id: createId("alert"),
+        level: "critical",
+        title: "Instagram 再認可が必要です",
+        description: `${account.accountName} の連携状態が ${account.status} です。再認可を実行してください。`,
+        link: "/connect",
+      });
+    } else if (expiringAccounts.length > 0) {
+      const account = expiringAccounts[0];
+      alerts.push({
+        id: createId("alert"),
+        level: "warning",
+        title: "Instagram トークンの期限が近づいています",
+        description: `${account.accountName} のトークンは ${new Date(account.tokenExpiresAt).toLocaleDateString("ja-JP")} に期限を迎えます。`,
+        link: "/connect",
       });
     }
 

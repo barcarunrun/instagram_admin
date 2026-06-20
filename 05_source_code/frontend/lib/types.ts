@@ -47,6 +47,22 @@ export interface InstagramIntegration {
   lastCheckedAt: string;
 }
 
+export interface InstagramIntegrationCandidate {
+  accountId: string;
+  facebookPageId: string;
+  accountName: string;
+  pageName: string;
+  permissions: string[];
+  status: IntegrationStatus;
+}
+
+export interface InstagramOAuthSession {
+  oauthSessionId: string;
+  intent: "connect" | "reauthorize";
+  tokenExpiresAt: string;
+  accounts: InstagramIntegrationCandidate[];
+}
+
 export interface MediaAsset {
   id: string;
   fileName: string;

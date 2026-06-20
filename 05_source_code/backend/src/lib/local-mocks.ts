@@ -7,7 +7,8 @@ type NotificationPayload = {
   metadata?: Record<string, unknown>;
 };
 
-const expectedState = process.env.MOCK_OAUTH_EXPECTED_STATE ?? "mock_state_demo";
+const expectedState =
+  process.env.MOCK_OAUTH_EXPECTED_STATE ?? "mock_state_demo";
 
 const instagramAccounts = [
   {
@@ -54,13 +55,13 @@ export function completeMockOAuthCallback(input: {
   state?: string;
   scenario?: string;
 }) {
-  if (input.state !== expectedState) {
+  if (!input.state) {
     return {
       ok: false as const,
       status: 401,
       code: "AUTH_EXPIRED",
       message: "state の検証に失敗しました。",
-      details: [{ field: "state", reason: "state_mismatch" }],
+      details: [{ field: "state", reason: "required" }],
     };
   }
 
@@ -87,7 +88,9 @@ export function completeMockOAuthCallback(input: {
   return {
     ok: true as const,
     accessToken: "mock_access_token",
-    tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+    tokenExpiresAt: new Date(
+      Date.now() + 1000 * 60 * 60 * 24 * 30,
+    ).toISOString(),
     account: instagramAccounts[0],
   };
 }
