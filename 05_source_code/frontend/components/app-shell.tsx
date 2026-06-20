@@ -1,11 +1,18 @@
 import Link from "next/link";
 import { ReactNode } from "react";
 import { serverApi } from "../lib/server-api";
-import { ContentIcon, DashboardIcon, LinkIcon, LogsIcon } from "./icons";
+import {
+  CalendarIcon,
+  ContentIcon,
+  DashboardIcon,
+  LinkIcon,
+  LogsIcon,
+} from "./icons";
 import { TopbarAction } from "./topbar-action";
 
 const navigation = [
   { href: "/dashboard", label: "ダッシュボード", icon: <DashboardIcon /> },
+  { href: "/calendar", label: "カレンダー", icon: <CalendarIcon /> },
   { href: "/contents", label: "コンテンツ", icon: <ContentIcon /> },
   { href: "/connect", label: "連携", icon: <LinkIcon /> },
   { href: "/logs", label: "実行ログ", icon: <LogsIcon /> },

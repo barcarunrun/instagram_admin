@@ -1,6 +1,27 @@
 import type { ValidationSummary } from "../lib/types";
 import { WarningIcon } from "./icons";
 
+const fieldLabels: Record<string, string> = {
+  title: "投稿名",
+  caption: "キャプション",
+  hashtags: "ハッシュタグ",
+  mediaAssets: "メディア",
+  "contentConfig.coverAssetId": "リールカバー画像",
+  "contentConfig.orderedMediaAssetIds": "カルーセル順序",
+};
+
+function toFieldLabel(field: string): string {
+  if (fieldLabels[field]) {
+    return fieldLabels[field];
+  }
+
+  if (field.startsWith("mediaAssets:")) {
+    return `メディア: ${field.split(":")[1]}`;
+  }
+
+  return field;
+}
+
 export function ValidationPanel({
   validation,
 }: {
@@ -30,7 +51,7 @@ export function ValidationPanel({
               className={`validation-item ${message.level === "error" ? "error" : "warning"}`}
             >
               <div className="validation-item-head">
-                <strong>{message.field}</strong>
+                <strong>{toFieldLabel(message.field)}</strong>
               </div>
               <p>{message.message}</p>
             </div>

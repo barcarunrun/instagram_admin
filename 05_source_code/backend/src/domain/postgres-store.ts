@@ -1,22 +1,31 @@
 import type { PoolClient } from "pg";
 import { createId } from "../lib/id.js";
 import { pool } from "../lib/db.js";
+import { normalizeContentPayload } from "./content-normalization.js";
 import { validateContentDraft } from "./content-rules.js";
 import type {
   AuditLog,
   CalendarEvent,
+  ContentConfig,
   ContentItem,
   ContentStatus,
   DashboardAlert,
   DashboardKpi,
+  DashboardReauthorizationAccount,
+  DashboardSummary,
   InstagramIntegration,
+  JobStatus,
   JobLog,
+  PostingJobQueueMessage,
   MediaAsset,
+  ScheduleItem,
   ValidationSummary,
 } from "./types.js";
 
 const DEFAULT_ACTOR_KEY = "user_demo";
 const EXECUTION_RATE_ALERT_THRESHOLD = 85;
+const MAX_AUTOMATIC_RETRIES = Number(process.env.MAX_AUTOMATIC_RETRIES ?? "3");
+const RETRY_BASE_SECONDS = Number(process.env.RETRY_BASE_SECONDS ?? "30");
 
 type ContentRow = {
   id: string;
@@ -25,6 +34,7 @@ type ContentRow = {
   status: ContentStatus;
   caption: string;
   hashtags: string[] | null;
+  content_config: ContentConfig | null;
   validation_summary: ValidationSummary | null;
   created_at: string | Date;
   updated_at: string | Date;
@@ -46,6 +56,27 @@ type MediaRelationRow = {
   content_id: string;
   media_asset_id: string;
 };
+
+type ScheduleRow = {
+  id: string;
+  content_id: string;
+  instagram_account_id: string;
+  publish_at: string | Date;
+  timezone: string;
+  schedule_status: JobStatus | "cancelled";
+  job_status: JobStatus | null;
+  created_by: string;
+  created_at: string | Date;
+  updated_at: string | Date;
+  has_publish_result: boolean;
+};
+
+type DashboardDateRange = {
+  from?: string;
+  to?: string;
+};
+
+export class StoreConflictError extends Error {}
 
 function toIso(value: string | Date | null | undefined): string {
   if (!value) {
@@ -75,6 +106,52 @@ function toValidationSummary(value: unknown): ValidationSummary {
   }
 
   return { valid: false, messages: [] };
+}
+
+function toContentConfig(value: unknown): ContentConfig {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as ContentConfig;
+  }
+
+  return {};
+}
+
+function normalizeDashboardDateRange(range?: DashboardDateRange): {
+  from?: string;
+  to?: string;
+} {
+  if (!range?.from && !range?.to) {
+    return {};
+  }
+
+  return {
+    from: range?.from ? toIso(range.from) : undefined,
+    to: range?.to ? toIso(range.to) : undefined,
+  };
+}
+
+function buildPublishAtRangeWhere(
+  column: string,
+  range?: DashboardDateRange,
+): { clause: string; values: string[] } {
+  const normalized = normalizeDashboardDateRange(range);
+  const conditions: string[] = [];
+  const values: string[] = [];
+
+  if (normalized.from) {
+    values.push(normalized.from);
+    conditions.push(`${column} >= $${values.length}::timestamptz`);
+  }
+
+  if (normalized.to) {
+    values.push(normalized.to);
+    conditions.push(`${column} <= $${values.length}::timestamptz`);
+  }
+
+  return {
+    clause: conditions.length > 0 ? `where ${conditions.join(" and ")}` : "",
+    values,
+  };
 }
 
 function mapMediaAsset(row: {
@@ -253,6 +330,7 @@ function mapContentRow(
     hashtags: toStringArray(row.hashtags),
     labels: toStringArray(row.labels),
     mediaAssetIds: relations.mediaIdsByContent.get(row.id) ?? [],
+    contentConfig: toContentConfig(row.content_config),
     validation: toValidationSummary(row.validation_summary),
     approvalStatus: row.approval_status,
     createdBy: row.created_by,
@@ -260,6 +338,141 @@ function mapContentRow(
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     versions: relations.versionsByContent.get(row.id) ?? [],
+  };
+}
+
+function mapScheduleRow(row: ScheduleRow): ScheduleItem {
+  return {
+    id: row.id,
+    contentId: row.content_id,
+    accountId: row.instagram_account_id,
+    publishAt: toIso(row.publish_at),
+    timezone: row.timezone,
+    status: row.job_status ?? row.schedule_status,
+    createdBy: row.created_by,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
+function getMockScenarioFromLabels(labels: string[]): string | undefined {
+  const scenarioLabel = labels.find((label) => label.startsWith("mock:"));
+  return scenarioLabel ? scenarioLabel.slice("mock:".length) : undefined;
+}
+
+function calculateNextRetryAt(retryCount: number): Date {
+  const delaySeconds = RETRY_BASE_SECONDS * 2 ** Math.max(retryCount - 1, 0);
+  return new Date(Date.now() + delaySeconds * 1000);
+}
+
+function classifyJobFailure(input: {
+  statusCode?: number;
+  code?: string;
+  message?: string;
+}): {
+  errorType: JobLog["errorType"];
+  jobStatus: JobStatus;
+  errorCode: string;
+  errorMessage: string;
+  resolution: string;
+  retryable: boolean;
+} {
+  const statusCode = input.statusCode;
+  const code = input.code ?? "UNKNOWN_ERROR";
+  const message = input.message ?? "投稿実行に失敗しました。";
+
+  if (statusCode === 401 || code === "AUTH_EXPIRED") {
+    return {
+      errorType: "auth",
+      jobStatus: "reauthorization_required",
+      errorCode: code,
+      errorMessage: message,
+      resolution: "Instagram を再認可してから再実行してください。",
+      retryable: false,
+    };
+  }
+
+  if (
+    statusCode === 403 ||
+    code === "PERMISSION_DENIED" ||
+    code === "VALIDATION_ERROR"
+  ) {
+    return {
+      errorType: "validation",
+      jobStatus: "action_required",
+      errorCode: code,
+      errorMessage: message,
+      resolution: "投稿内容または権限設定を修正してから再実行してください。",
+      retryable: false,
+    };
+  }
+
+  if (statusCode === 429 || code === "RATE_LIMIT") {
+    return {
+      errorType: "rate_limit",
+      jobStatus: "retrying",
+      errorCode: code,
+      errorMessage: message,
+      resolution: "レート制限のため、時間をおいて自動再試行します。",
+      retryable: true,
+    };
+  }
+
+  if (
+    statusCode === 408 ||
+    statusCode === 502 ||
+    statusCode === 503 ||
+    statusCode === 504 ||
+    code === "NETWORK_ERROR" ||
+    code === "TIMEOUT" ||
+    code === "UNKNOWN_RESULT"
+  ) {
+    return {
+      errorType: code === "UNKNOWN_RESULT" ? "unknown" : "network",
+      jobStatus: "retrying",
+      errorCode: code,
+      errorMessage: message,
+      resolution: "一時障害のため、自動再試行します。",
+      retryable: true,
+    };
+  }
+
+  return {
+    errorType: "unknown",
+    jobStatus: "failed",
+    errorCode: code,
+    errorMessage: message,
+    resolution: "原因を確認して再実行してください。",
+    retryable: false,
+  };
+}
+
+async function getContentValidationAssets(
+  input: Pick<ContentItem, "contentType" | "mediaAssetIds" | "contentConfig">,
+): Promise<{
+  assets: MediaAsset[];
+  configAssets: { coverAsset?: MediaAsset };
+}> {
+  const extraAssetIds: string[] = [];
+
+  if (input.contentType === "reel" && input.contentConfig.coverAssetId) {
+    extraAssetIds.push(input.contentConfig.coverAssetId);
+  }
+
+  const allAssets = await getMediaAssetsByIds([
+    ...new Set([...input.mediaAssetIds, ...extraAssetIds]),
+  ]);
+  const assetsById = new Map(allAssets.map((asset) => [asset.id, asset]));
+
+  return {
+    assets: input.mediaAssetIds
+      .map((assetId) => assetsById.get(assetId))
+      .filter((asset): asset is MediaAsset => Boolean(asset)),
+    configAssets: {
+      coverAsset: input.contentConfig.coverAssetId
+        ? assetsById.get(input.contentConfig.coverAssetId)
+        : undefined,
+    },
   };
 }
 
@@ -393,7 +606,7 @@ async function fetchContentById(id: string): Promise<ContentItem | undefined> {
   const result = await pool.query<ContentRow>(
     `
       select id, title, content_type, status, caption, hashtags,
-        validation_summary, created_at, updated_at, labels,
+        content_config, validation_summary, created_at, updated_at, labels,
         approval_status, created_by, updated_by
       from contents
       where id = $1::uuid
@@ -409,6 +622,65 @@ async function fetchContentById(id: string): Promise<ContentItem | undefined> {
 
   const [content] = await fetchContents([row]);
   return content;
+}
+
+async function fetchScheduleRowByQuery(
+  whereClause: string,
+  values: Array<string | null>,
+): Promise<ScheduleRow | undefined> {
+  const result = await pool.query<ScheduleRow>(
+    `
+      select s.id, s.content_id, ia.instagram_account_id, s.publish_at,
+        s.timezone, s.status as schedule_status, pj.job_status,
+        coalesce(nullif(u.name, ''), u.email, u.id::text) as created_by,
+        s.created_at, s.updated_at,
+        exists(
+          select 1
+          from publish_results pr
+          where pr.posting_job_id = pj.id
+        ) as has_publish_result
+      from schedules s
+      join instagram_accounts ia on ia.id = s.instagram_account_id
+      join users u on u.id = s.created_by
+      left join posting_jobs pj on pj.schedule_id = s.id
+      where ${whereClause}
+      order by pj.updated_at desc nulls last, pj.created_at desc nulls last
+      limit 1
+    `,
+    values,
+  );
+
+  return result.rows[0];
+}
+
+async function refreshContentScheduleStatus(
+  contentId: string,
+  client: PoolClient,
+): Promise<void> {
+  const activeScheduleResult = await client.query<{ has_active: boolean }>(
+    `
+      select exists(
+        select 1
+        from schedules
+        where content_id = $1::uuid
+          and status <> 'cancelled'
+      ) as has_active
+    `,
+    [contentId],
+  );
+
+  await client.query(
+    `
+      update contents
+      set status = $2,
+        updated_at = current_timestamp
+      where id = $1::uuid
+    `,
+    [
+      contentId,
+      activeScheduleResult.rows[0]?.has_active ? "scheduled" : "draft",
+    ],
+  );
 }
 
 async function createAuditLog(
@@ -660,7 +932,7 @@ export const store = {
     const result = await pool.query<ContentRow>(
       `
         select id, title, content_type, status, caption, hashtags,
-          validation_summary, created_at, updated_at, labels,
+          content_config, validation_summary, created_at, updated_at, labels,
           approval_status, created_by, updated_by
         from contents
         ${where}
@@ -797,8 +1069,8 @@ export const store = {
     options?: { requestId?: string },
   ): Promise<ContentItem> {
     const actorUserId = await resolveActorUserId(input.createdBy);
-    const assets = await getMediaAssetsByIds(input.mediaAssetIds);
-    const validation = validateContentDraft(input, assets);
+    const { assets, configAssets } = await getContentValidationAssets(input);
+    const validation = validateContentDraft(input, assets, configAssets);
     const contentId = createId("content");
     const versionId = createId("version");
     const client = await pool.connect();
@@ -809,12 +1081,12 @@ export const store = {
         `
           insert into contents (
             id, user_id, title, content_type, status, caption, hashtags,
-            validation_summary, created_at, updated_at, labels,
+            content_config, validation_summary, created_at, updated_at, labels,
             approval_status, created_by, updated_by
           ) values (
             $1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb,
-            $8::jsonb, current_timestamp, current_timestamp, $9::jsonb,
-            $10, $11, $12
+            $8::jsonb, $9::jsonb, current_timestamp, current_timestamp, $10::jsonb,
+            $11, $12, $13
           )
         `,
         [
@@ -825,6 +1097,7 @@ export const store = {
           "draft",
           input.caption,
           JSON.stringify(input.hashtags),
+          JSON.stringify(input.contentConfig),
           JSON.stringify(validation),
           JSON.stringify(input.labels),
           input.approvalStatus,
@@ -892,14 +1165,15 @@ export const store = {
       hashtags: patch.hashtags ?? existing.hashtags,
       labels: patch.labels ?? existing.labels,
       mediaAssetIds: patch.mediaAssetIds ?? existing.mediaAssetIds,
+      contentConfig: patch.contentConfig ?? existing.contentConfig,
       approvalStatus: patch.approvalStatus ?? existing.approvalStatus,
       createdBy: patch.createdBy ?? existing.createdBy,
       updatedBy: patch.updatedBy ?? existing.updatedBy,
       status: patch.status ?? existing.status,
       versions: existing.versions,
     };
-    const assets = await getMediaAssetsByIds(merged.mediaAssetIds);
-    const validation = validateContentDraft(merged, assets);
+    const { assets, configAssets } = await getContentValidationAssets(merged);
+    const validation = validateContentDraft(merged, assets, configAssets);
     const versionId = createId("version");
     const client = await pool.connect();
 
@@ -913,12 +1187,13 @@ export const store = {
             status = $4,
             caption = $5,
             hashtags = $6::jsonb,
-            validation_summary = $7::jsonb,
+            content_config = $7::jsonb,
+            validation_summary = $8::jsonb,
             updated_at = current_timestamp,
-            labels = $8::jsonb,
-            approval_status = $9,
-            created_by = $10,
-            updated_by = $11
+            labels = $9::jsonb,
+            approval_status = $10,
+            created_by = $11,
+            updated_by = $12
           where id = $1::uuid
         `,
         [
@@ -928,6 +1203,7 @@ export const store = {
           merged.status,
           merged.caption,
           JSON.stringify(merged.hashtags),
+          JSON.stringify(merged.contentConfig),
           JSON.stringify(validation),
           JSON.stringify(merged.labels),
           merged.approvalStatus,
@@ -997,6 +1273,7 @@ export const store = {
         hashtags: [...existing.hashtags],
         labels: [...existing.labels],
         mediaAssetIds: [...existing.mediaAssetIds],
+        contentConfig: { ...existing.contentConfig },
         approvalStatus: existing.approvalStatus,
         createdBy: actorKey,
         updatedBy: actorKey,
@@ -1013,8 +1290,8 @@ export const store = {
       return undefined;
     }
 
-    const assets = await getMediaAssetsByIds(content.mediaAssetIds);
-    const validation = validateContentDraft(content, assets);
+    const { assets, configAssets } = await getContentValidationAssets(content);
+    const validation = validateContentDraft(content, assets, configAssets);
     await pool.query(
       `
         update contents
@@ -1027,11 +1304,558 @@ export const store = {
     return validation;
   },
 
+  async previewContentValidation(
+    id: string,
+    patch: Partial<ContentItem>,
+  ): Promise<ContentItem["validation"] | undefined> {
+    const existing = await fetchContentById(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    const merged: ContentItem = {
+      ...existing,
+      ...patch,
+      hashtags: patch.hashtags ?? existing.hashtags,
+      labels: patch.labels ?? existing.labels,
+      mediaAssetIds: patch.mediaAssetIds ?? existing.mediaAssetIds,
+      contentConfig: patch.contentConfig ?? existing.contentConfig,
+      approvalStatus: patch.approvalStatus ?? existing.approvalStatus,
+      createdBy: patch.createdBy ?? existing.createdBy,
+      updatedBy: patch.updatedBy ?? existing.updatedBy,
+      status: patch.status ?? existing.status,
+      versions: existing.versions,
+    };
+
+    const { assets, configAssets } = await getContentValidationAssets(merged);
+    return validateContentDraft(merged, assets, configAssets);
+  },
+
+  async getNormalizedContentPayload(id: string) {
+    const content = await fetchContentById(id);
+    if (!content) {
+      return undefined;
+    }
+
+    const { assets, configAssets } = await getContentValidationAssets(content);
+    return normalizeContentPayload(content, assets, configAssets);
+  },
+
+  async claimDuePostingJobs(
+    limit: number = 10,
+  ): Promise<PostingJobQueueMessage[]> {
+    const safeLimit = Math.max(1, Math.min(limit, 100));
+    const result = await pool.query<{
+      id: string;
+      schedule_id: string;
+      content_id: string;
+      account_id: string;
+      publish_at: string | Date;
+      retry_count: number;
+    }>(
+      `
+        with due_jobs as (
+          select pj.id, pj.schedule_id, s.content_id,
+            ia.instagram_account_id as account_id,
+            s.publish_at, pj.retry_count
+          from posting_jobs pj
+          join schedules s on s.id = pj.schedule_id
+          join instagram_accounts ia on ia.id = s.instagram_account_id
+          where s.status <> 'cancelled'
+            and pj.job_status in ('scheduled', 'retrying')
+            and (
+              (pj.job_status = 'scheduled' and s.publish_at <= current_timestamp)
+              or (
+                pj.job_status = 'retrying'
+                and pj.next_retry_at is not null
+                and pj.next_retry_at <= current_timestamp
+              )
+            )
+            and (
+              pj.locked_at is null
+              or pj.locked_at <= current_timestamp - interval '5 minutes'
+            )
+          order by coalesce(pj.next_retry_at, s.publish_at) asc
+          limit $1
+          for update skip locked
+        )
+        update posting_jobs pj
+        set locked_at = current_timestamp,
+          updated_at = current_timestamp
+        from due_jobs dj
+        where pj.id = dj.id
+        returning pj.id, dj.schedule_id, dj.content_id, dj.account_id,
+          dj.publish_at, pj.retry_count
+      `,
+      [safeLimit],
+    );
+
+    return result.rows.map((row) => ({
+      jobId: row.id,
+      scheduleId: row.schedule_id,
+      contentId: row.content_id,
+      accountId: row.account_id,
+      publishAt: toIso(row.publish_at),
+      retryCount: row.retry_count,
+      triggeredBy: "scheduler",
+    }));
+  },
+
+  async startPostingJob(jobId: string): Promise<boolean> {
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      const eligibility = await client.query<{
+        id: string;
+        schedule_id: string;
+        content_id: string;
+        job_status: JobStatus;
+        integration_status: InstagramIntegration["status"];
+        token_expires_at: string | Date | null;
+      }>(
+        `
+          select pj.id, pj.schedule_id, s.content_id, pj.job_status,
+            ia.status as integration_status, ia.token_expires_at
+          from posting_jobs pj
+          join schedules s on s.id = pj.schedule_id
+          join instagram_accounts ia on ia.id = s.instagram_account_id
+          where pj.id = $1::uuid
+          limit 1
+        `,
+        [jobId],
+      );
+      const job = eligibility.rows[0];
+
+      if (!job) {
+        await client.query("rollback");
+        return false;
+      }
+
+      const integrationStatus = deriveIntegrationStatus(
+        job.integration_status,
+        job.token_expires_at,
+      );
+
+      if (integrationStatus !== "active") {
+        await client.query(
+          `
+            update posting_jobs
+            set job_status = 'reauthorization_required',
+              error_type = 'auth',
+              error_code = 'AUTH_EXPIRED',
+              error_message = 'アカウント連携の有効期限が切れています。',
+              resolution = 'Instagram を再認可してから再実行してください。',
+              next_retry_at = null,
+              locked_at = null,
+              executed_at = current_timestamp,
+              updated_at = current_timestamp
+            where id = $1::uuid
+          `,
+          [jobId],
+        );
+        await client.query(
+          `
+            update schedules
+            set status = 'reauthorization_required',
+              updated_at = current_timestamp
+            where id = $1::uuid
+          `,
+          [job.schedule_id],
+        );
+        await client.query(
+          `
+            update contents
+            set status = 'action_required',
+              updated_at = current_timestamp
+            where id = $1::uuid
+          `,
+          [job.content_id],
+        );
+        await createAuditLog(
+          "job.reauthorization_required",
+          "posting_job",
+          jobId,
+          { contentId: job.content_id, reason: "AUTH_EXPIRED" },
+          DEFAULT_ACTOR_KEY,
+          client,
+        );
+        await client.query("commit");
+        throw new StoreConflictError(
+          "Instagram の再認可が必要なため、このジョブは開始できません。",
+        );
+      }
+
+      const started = await client.query<{ id: string }>(
+        `
+          update posting_jobs
+          set job_status = 'running',
+            executed_at = current_timestamp,
+            updated_at = current_timestamp
+          where id = $1::uuid
+            and job_status in ('scheduled', 'retrying')
+          returning id
+        `,
+        [jobId],
+      );
+
+      if (started.rows.length === 0) {
+        await client.query("rollback");
+        return false;
+      }
+
+      await client.query(
+        `
+          update schedules
+          set status = 'running',
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [job.schedule_id],
+      );
+      await createAuditLog(
+        "job.started",
+        "posting_job",
+        jobId,
+        { contentId: job.content_id },
+        DEFAULT_ACTOR_KEY,
+        client,
+      );
+      await client.query("commit");
+      return true;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async getPostingJobExecutionPayload(jobId: string) {
+    const jobResult = await pool.query<{
+      id: string;
+      schedule_id: string;
+      content_id: string;
+      account_id: string;
+      publish_at: string | Date;
+      retry_count: number;
+      job_status: JobStatus;
+    }>(
+      `
+        select pj.id, pj.schedule_id, s.content_id,
+          ia.instagram_account_id as account_id,
+          s.publish_at, pj.retry_count, pj.job_status
+        from posting_jobs pj
+        join schedules s on s.id = pj.schedule_id
+        join instagram_accounts ia on ia.id = s.instagram_account_id
+        where pj.id = $1::uuid
+        limit 1
+      `,
+      [jobId],
+    );
+    const job = jobResult.rows[0];
+
+    if (!job || job.job_status !== "running") {
+      return undefined;
+    }
+
+    const content = await fetchContentById(job.content_id);
+    const payload = await this.getNormalizedContentPayload(job.content_id);
+
+    if (!content || !payload) {
+      return undefined;
+    }
+
+    return {
+      jobId: job.id,
+      scheduleId: job.schedule_id,
+      contentId: job.content_id,
+      accountId: job.account_id,
+      publishAt: toIso(job.publish_at),
+      retryCount: job.retry_count,
+      mockScenario: getMockScenarioFromLabels(content.labels),
+      payload,
+    };
+  },
+
+  async getPostingJobQueueMessage(
+    jobId: string,
+    triggeredBy: PostingJobQueueMessage["triggeredBy"],
+  ): Promise<PostingJobQueueMessage | undefined> {
+    const result = await pool.query<{
+      id: string;
+      schedule_id: string;
+      content_id: string;
+      account_id: string;
+      publish_at: string | Date;
+      retry_count: number;
+    }>(
+      `
+        select pj.id, pj.schedule_id, s.content_id,
+          ia.instagram_account_id as account_id,
+          s.publish_at, pj.retry_count
+        from posting_jobs pj
+        join schedules s on s.id = pj.schedule_id
+        join instagram_accounts ia on ia.id = s.instagram_account_id
+        where pj.id = $1::uuid
+        limit 1
+      `,
+      [jobId],
+    );
+    const row = result.rows[0];
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      jobId: row.id,
+      scheduleId: row.schedule_id,
+      contentId: row.content_id,
+      accountId: row.account_id,
+      publishAt: toIso(row.publish_at),
+      retryCount: row.retry_count,
+      triggeredBy,
+    };
+  },
+
+  async completePostingJob(input: {
+    jobId: string;
+    externalPublishId?: string;
+    responsePayload?: Record<string, unknown>;
+    publishedAt?: string;
+  }): Promise<boolean> {
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      const jobResult = await client.query<{
+        id: string;
+        schedule_id: string;
+        content_id: string;
+      }>(
+        `
+          select pj.id, pj.schedule_id, s.content_id
+          from posting_jobs pj
+          join schedules s on s.id = pj.schedule_id
+          where pj.id = $1::uuid
+          limit 1
+        `,
+        [input.jobId],
+      );
+      const job = jobResult.rows[0];
+
+      if (!job) {
+        await client.query("rollback");
+        return false;
+      }
+
+      const publishResultExists = await client.query<{ id: string }>(
+        `
+          select id
+          from publish_results
+          where posting_job_id = $1::uuid
+          limit 1
+        `,
+        [input.jobId],
+      );
+
+      if (publishResultExists.rows.length === 0) {
+        await client.query(
+          `
+            insert into publish_results (
+              id, posting_job_id, external_publish_id, response_payload,
+              published_at, created_at
+            ) values (
+              $1::uuid, $2::uuid, $3, $4::jsonb, $5::timestamp, current_timestamp
+            )
+          `,
+          [
+            createId("publish"),
+            input.jobId,
+            input.externalPublishId ?? null,
+            JSON.stringify(input.responsePayload ?? {}),
+            input.publishedAt ?? new Date().toISOString(),
+          ],
+        );
+      }
+
+      await client.query(
+        `
+          update posting_jobs
+          set job_status = 'success',
+            error_type = null,
+            error_code = null,
+            error_message = null,
+            resolution = '投稿が完了しました。',
+            next_retry_at = null,
+            locked_at = null,
+            executed_at = current_timestamp,
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [input.jobId],
+      );
+      await client.query(
+        `
+          update schedules
+          set status = 'success',
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [job.schedule_id],
+      );
+      await client.query(
+        `
+          update contents
+          set status = 'published',
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [job.content_id],
+      );
+      await createAuditLog(
+        "job.completed",
+        "posting_job",
+        input.jobId,
+        { contentId: job.content_id },
+        DEFAULT_ACTOR_KEY,
+        client,
+      );
+      await client.query("commit");
+      return true;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async failPostingJob(input: {
+    jobId: string;
+    statusCode?: number;
+    code?: string;
+    message?: string;
+  }): Promise<boolean> {
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      const jobResult = await client.query<{
+        id: string;
+        schedule_id: string;
+        content_id: string;
+        retry_count: number;
+      }>(
+        `
+          select pj.id, pj.schedule_id, s.content_id, pj.retry_count
+          from posting_jobs pj
+          join schedules s on s.id = pj.schedule_id
+          where pj.id = $1::uuid
+          limit 1
+        `,
+        [input.jobId],
+      );
+      const job = jobResult.rows[0];
+
+      if (!job) {
+        await client.query("rollback");
+        return false;
+      }
+
+      const classified = classifyJobFailure(input);
+      const nextRetryCount = job.retry_count + 1;
+      const shouldRetry =
+        classified.retryable && nextRetryCount <= MAX_AUTOMATIC_RETRIES;
+
+      const finalStatus: JobStatus = shouldRetry
+        ? "retrying"
+        : classified.jobStatus === "retrying"
+          ? "failed"
+          : classified.jobStatus;
+      const resolution = shouldRetry
+        ? `${classified.resolution}（${nextRetryCount}/${MAX_AUTOMATIC_RETRIES}）`
+        : classified.jobStatus === "retrying"
+          ? `自動再試行が上限に達しました。手動確認が必要です。`
+          : classified.resolution;
+      const nextRetryAt = shouldRetry
+        ? calculateNextRetryAt(nextRetryCount).toISOString()
+        : null;
+
+      await client.query(
+        `
+          update posting_jobs
+          set job_status = $2,
+            error_type = $3,
+            error_code = $4,
+            error_message = $5,
+            resolution = $6,
+            retry_count = $7,
+            next_retry_at = $8::timestamp,
+            locked_at = null,
+            executed_at = current_timestamp,
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [
+          input.jobId,
+          finalStatus,
+          classified.errorType,
+          classified.errorCode,
+          classified.errorMessage,
+          resolution,
+          shouldRetry ? nextRetryCount : job.retry_count,
+          nextRetryAt,
+        ],
+      );
+      await client.query(
+        `
+          update schedules
+          set status = $2,
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [job.schedule_id, finalStatus],
+      );
+      await client.query(
+        `
+          update contents
+          set status = $2,
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [
+          job.content_id,
+          ["action_required", "reauthorization_required"].includes(finalStatus)
+            ? "action_required"
+            : "failed",
+        ],
+      );
+      await createAuditLog(
+        shouldRetry ? "job.retry_scheduled" : "job.failed",
+        "posting_job",
+        input.jobId,
+        { contentId: job.content_id, errorCode: classified.errorCode },
+        DEFAULT_ACTOR_KEY,
+        client,
+      );
+      await client.query("commit");
+      return true;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
   async validateSchedule(input: {
     contentId: string;
     publishAt: string;
     timezone: string;
     accountId: string;
+    excludeScheduleId?: string;
   }): Promise<{ valid: boolean; messages: string[] }> {
     await refreshExpiredInstagramAccounts();
     const messages: string[] = [];
@@ -1066,9 +1890,16 @@ export const store = {
           where s.content_id = $1::uuid
             and ia.instagram_account_id = $2
             and s.publish_at = $3::timestamp
+            and s.status <> 'cancelled'
+            and ($4::uuid is null or s.id <> $4::uuid)
           limit 1
         `,
-          [input.contentId, input.accountId, input.publishAt],
+          [
+            input.contentId,
+            input.accountId,
+            input.publishAt,
+            input.excludeScheduleId ?? null,
+          ],
         ),
       ]);
 
@@ -1106,6 +1937,21 @@ export const store = {
     }
 
     return { valid: messages.length === 0, messages };
+  },
+
+  async getScheduleById(id: string): Promise<ScheduleItem | undefined> {
+    const row = await fetchScheduleRowByQuery("s.id = $1::uuid", [id]);
+    return row ? mapScheduleRow(row) : undefined;
+  },
+
+  async getLatestScheduleForContent(
+    contentId: string,
+  ): Promise<ScheduleItem | undefined> {
+    const row = await fetchScheduleRowByQuery(
+      "s.content_id = $1::uuid and s.status <> 'cancelled'",
+      [contentId],
+    );
+    return row ? mapScheduleRow(row) : undefined;
   },
 
   async createSchedule(
@@ -1233,7 +2079,178 @@ export const store = {
     };
   },
 
-  async getCalendarEvents(): Promise<CalendarEvent[]> {
+  async updateSchedule(
+    id: string,
+    input: {
+      contentId: string;
+      publishAt: string;
+      timezone: string;
+      accountId: string;
+    },
+    actorKey: string = DEFAULT_ACTOR_KEY,
+    options?: { requestId?: string },
+  ): Promise<ScheduleItem | undefined> {
+    const existing = await fetchScheduleRowByQuery("s.id = $1::uuid", [id]);
+
+    if (!existing) {
+      return undefined;
+    }
+
+    const effectiveStatus = existing.job_status ?? existing.schedule_status;
+    if (effectiveStatus !== "scheduled") {
+      throw new StoreConflictError("予約済みのスケジュールのみ変更できます。");
+    }
+
+    const integrationResult = await pool.query<{ id: string }>(
+      `
+        select id
+        from instagram_accounts
+        where instagram_account_id = $1
+        limit 1
+      `,
+      [input.accountId],
+    );
+    const integration = integrationResult.rows[0];
+
+    if (!integration) {
+      throw new StoreConflictError(
+        "公開先アカウントが見つかりません。連携状態を確認してください。",
+      );
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      await client.query(
+        `
+          update schedules
+          set content_id = $2::uuid,
+            instagram_account_id = $3::uuid,
+            publish_at = $4::timestamp,
+            timezone = $5,
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [id, input.contentId, integration.id, input.publishAt, input.timezone],
+      );
+
+      await client.query(
+        `
+          update posting_jobs
+          set updated_at = current_timestamp
+          where schedule_id = $1::uuid
+        `,
+        [id],
+      );
+
+      await refreshContentScheduleStatus(existing.content_id, client);
+      if (existing.content_id !== input.contentId) {
+        await refreshContentScheduleStatus(input.contentId, client);
+      }
+
+      await createAuditLog(
+        "schedule.updated",
+        "schedule",
+        id,
+        {
+          contentId: input.contentId,
+          publishAt: input.publishAt,
+          requestId: options?.requestId ?? "",
+        },
+        actorKey,
+        client,
+      );
+
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return this.getScheduleById(id);
+  },
+
+  async cancelSchedule(
+    id: string,
+    actorKey: string = DEFAULT_ACTOR_KEY,
+    options?: { requestId?: string },
+  ): Promise<ScheduleItem | undefined> {
+    const existing = await fetchScheduleRowByQuery("s.id = $1::uuid", [id]);
+
+    if (!existing) {
+      return undefined;
+    }
+
+    const effectiveStatus = existing.job_status ?? existing.schedule_status;
+    if (!["scheduled", "failed"].includes(effectiveStatus)) {
+      throw new StoreConflictError(
+        "予約済み、または失敗したスケジュールのみ取消できます。",
+      );
+    }
+
+    if (existing.has_publish_result) {
+      throw new StoreConflictError(
+        "公開結果が存在するため、このスケジュールは取消できません。",
+      );
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      await client.query(
+        `
+          update schedules
+          set status = 'cancelled',
+            updated_at = current_timestamp
+          where id = $1::uuid
+        `,
+        [id],
+      );
+
+      await client.query(
+        `
+          update posting_jobs
+          set job_status = 'cancelled',
+            resolution = '予約を取り消しました。',
+            updated_at = current_timestamp
+          where schedule_id = $1::uuid
+        `,
+        [id],
+      );
+
+      await refreshContentScheduleStatus(existing.content_id, client);
+
+      await createAuditLog(
+        "schedule.cancelled",
+        "schedule",
+        id,
+        {
+          contentId: existing.content_id,
+          requestId: options?.requestId ?? "",
+        },
+        actorKey,
+        client,
+      );
+
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return this.getScheduleById(id);
+  },
+
+  async getCalendarEvents(
+    range?: DashboardDateRange,
+  ): Promise<CalendarEvent[]> {
+    const publishRange = buildPublishAtRangeWhere("s.publish_at", range);
     const result = await pool.query<{
       id: string;
       title: string;
@@ -1248,8 +2265,10 @@ export const store = {
         from schedules s
         join contents c on c.id = s.content_id
         join instagram_accounts ia on ia.id = s.instagram_account_id
+        ${publishRange.clause}
         order by s.publish_at asc
       `,
+      publishRange.values,
     );
 
     return result.rows.map((row) => ({
@@ -1262,12 +2281,14 @@ export const store = {
     }));
   },
 
-  async getDashboardKpi(): Promise<DashboardKpi> {
-    const [jobAggregate, scheduleCount] = await Promise.all([
+  async getDashboardKpi(range?: DashboardDateRange): Promise<DashboardKpi> {
+    const publishRange = buildPublishAtRangeWhere("s.publish_at", range);
+    const [jobAggregate, scheduleCount, unexecutedCount] = await Promise.all([
       pool.query<{
         total: string;
         success_count: string;
         failed_count: string;
+        unexecuted_count: string;
         action_required_count: string;
       }>(
         `
@@ -1276,19 +2297,41 @@ export const store = {
             count(*) filter (where job_status = 'success')::text as success_count,
             count(*) filter (where job_status = 'failed')::text as failed_count,
             count(*) filter (
+              where job_status in ('scheduled', 'running', 'retrying')
+            )::text as unexecuted_count,
+            count(*) filter (
               where job_status in ('action_required', 'reauthorization_required')
             )::text as action_required_count
-          from posting_jobs
+          from posting_jobs pj
+          join schedules s on s.id = pj.schedule_id
+          ${publishRange.clause}
         `,
+        publishRange.values,
       ),
       pool.query<{ count: string }>(
-        `select count(*)::text as count from schedules`,
+        `
+          select count(*)::text as count
+          from schedules s
+          ${publishRange.clause}
+        `,
+        publishRange.values,
+      ),
+      pool.query<{ count: string }>(
+        `
+          select count(*)::text as count
+          from schedules s
+          left join posting_jobs pj on pj.schedule_id = s.id
+          ${publishRange.clause}${publishRange.clause ? " and" : " where"}
+            coalesce(pj.job_status, s.status) in ('scheduled', 'running', 'retrying')
+        `,
+        publishRange.values,
       ),
     ]);
     const jobRow = jobAggregate.rows[0] ?? {
       total: "0",
       success_count: "0",
       failed_count: "0",
+      unexecuted_count: "0",
       action_required_count: "0",
     };
     const total = Math.max(Number(jobRow.total), 1);
@@ -1299,13 +2342,18 @@ export const store = {
       ),
       weeklyPostCount: Number(scheduleCount.rows[0]?.count ?? 0),
       failedCount: Number(jobRow.failed_count),
+      unexecutedCount: Number(
+        unexecutedCount.rows[0]?.count ?? jobRow.unexecuted_count,
+      ),
       actionRequiredCount: Number(jobRow.action_required_count),
     };
   },
 
-  async getDashboardAlerts(): Promise<DashboardAlert[]> {
+  async getDashboardAlerts(
+    range?: DashboardDateRange,
+  ): Promise<DashboardAlert[]> {
     await refreshExpiredInstagramAccounts();
-    const kpi = await this.getDashboardKpi();
+    const kpi = await this.getDashboardKpi(range);
     const alerts: DashboardAlert[] = [];
     const [expiringAccounts, reauthorizationAccounts] = await Promise.all([
       getExpiringInstagramAccounts(7),
@@ -1353,6 +2401,112 @@ export const store = {
     }
 
     return alerts;
+  },
+
+  async getDashboardReauthorizationAccounts(): Promise<
+    DashboardReauthorizationAccount[]
+  > {
+    await refreshExpiredInstagramAccounts();
+
+    const accounts = await getReauthorizationInstagramAccounts();
+    return accounts.map((account) => ({
+      id: account.id,
+      accountId: account.accountId,
+      accountName: account.accountName,
+      status: account.status,
+      tokenExpiresAt: account.tokenExpiresAt,
+    }));
+  },
+
+  async getDashboardFailures(range?: DashboardDateRange): Promise<JobLog[]> {
+    const publishRange = buildPublishAtRangeWhere("s.publish_at", range);
+    const result = await pool.query<{
+      id: string;
+      schedule_id: string;
+      content_id: string;
+      job_status: JobLog["status"];
+      retry_count: number;
+      error_type: JobLog["errorType"] | null;
+      error_code: string | null;
+      error_message: string | null;
+      resolution: string | null;
+      executed_at: string | Date;
+    }>(
+      `
+        select pj.id, pj.schedule_id, s.content_id, pj.job_status, pj.retry_count,
+          pj.error_type, pj.error_code, pj.error_message, pj.resolution,
+          pj.executed_at
+        from posting_jobs pj
+        join schedules s on s.id = pj.schedule_id
+        ${publishRange.clause}${publishRange.clause ? " and" : " where"}
+          pj.job_status in ('failed', 'action_required', 'reauthorization_required')
+        order by pj.executed_at desc, pj.created_at desc
+        limit 10
+      `,
+      publishRange.values,
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      scheduleId: row.schedule_id,
+      contentId: row.content_id,
+      status: row.job_status,
+      retryCount: row.retry_count,
+      errorType: row.error_type ?? undefined,
+      errorCode: row.error_code ?? undefined,
+      errorMessage: row.error_message ?? undefined,
+      resolution: row.resolution ?? undefined,
+      executedAt: toIso(row.executed_at),
+    }));
+  },
+
+  async getDashboardUnexecuted(
+    range?: DashboardDateRange,
+  ): Promise<ScheduleItem[]> {
+    const publishRange = buildPublishAtRangeWhere("s.publish_at", range);
+    const result = await pool.query<ScheduleRow>(
+      `
+        select s.id, s.content_id, ia.instagram_account_id, s.publish_at, s.timezone,
+          s.status as schedule_status, pj.job_status, s.created_by, s.created_at,
+          s.updated_at,
+          exists (
+            select 1
+            from publish_results pr
+            where pr.posting_job_id = pj.id
+          ) as has_publish_result
+        from schedules s
+        join instagram_accounts ia on ia.id = s.instagram_account_id
+        left join posting_jobs pj on pj.schedule_id = s.id
+        ${publishRange.clause}${publishRange.clause ? " and" : " where"}
+          coalesce(pj.job_status, s.status) in ('scheduled', 'running', 'retrying')
+        order by s.publish_at asc
+        limit 10
+      `,
+      publishRange.values,
+    );
+
+    return result.rows.map(mapScheduleRow);
+  },
+
+  async getDashboardSummary(
+    range?: DashboardDateRange,
+  ): Promise<DashboardSummary> {
+    const [kpi, alerts, failures, unexecuted, reauthorizationAccounts] =
+      await Promise.all([
+        this.getDashboardKpi(range),
+        this.getDashboardAlerts(range),
+        this.getDashboardFailures(range),
+        this.getDashboardUnexecuted(range),
+        this.getDashboardReauthorizationAccounts(),
+      ]);
+
+    return {
+      kpi,
+      alerts,
+      failures,
+      unexecuted,
+      reauthorizationAccounts,
+    };
   },
 
   async getJobLogs(): Promise<JobLog[]> {
@@ -1421,6 +2575,8 @@ export const store = {
             error_code = 'RETRY_REQUESTED',
             error_message = '再実行する',
             resolution = concat('自動再試行中です（', pj.retry_count + 1, '/3）。'),
+            next_retry_at = current_timestamp,
+            locked_at = null,
             executed_at = current_timestamp,
             updated_at = current_timestamp
           from schedules s

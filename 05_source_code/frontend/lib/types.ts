@@ -20,6 +20,7 @@ export type JobStatus =
   | "success"
   | "failed"
   | "retrying"
+  | "cancelled"
   | "action_required"
   | "reauthorization_required";
 
@@ -83,6 +84,13 @@ export interface ContentVersion {
   summary: string;
 }
 
+export interface ContentConfig {
+  orderedMediaAssetIds?: string[];
+  coverAssetId?: string;
+  templateKey?: string;
+  settings?: Record<string, unknown>;
+}
+
 export interface ContentItem {
   id: string;
   title: string;
@@ -92,6 +100,7 @@ export interface ContentItem {
   hashtags: string[];
   labels: string[];
   mediaAssetIds: string[];
+  contentConfig: ContentConfig;
   validation: ValidationSummary;
   approvalStatus: "not_required" | "pending" | "approved" | "rejected";
   createdBy: string;
@@ -105,6 +114,7 @@ export interface DashboardKpi {
   postingExecutionRate: number;
   weeklyPostCount: number;
   failedCount: number;
+  unexecutedCount: number;
   actionRequiredCount: number;
 }
 
@@ -114,6 +124,22 @@ export interface DashboardAlert {
   title: string;
   description: string;
   link: string;
+}
+
+export interface DashboardReauthorizationAccount {
+  id: string;
+  accountId: string;
+  accountName: string;
+  status: IntegrationStatus;
+  tokenExpiresAt: string;
+}
+
+export interface DashboardSummary {
+  kpi: DashboardKpi;
+  alerts: DashboardAlert[];
+  failures: JobLog[];
+  unexecuted: ScheduleItem[];
+  reauthorizationAccounts: DashboardReauthorizationAccount[];
 }
 
 export interface CalendarEvent {
@@ -141,6 +167,18 @@ export interface JobLog {
 export interface ScheduleValidationResult {
   valid: boolean;
   messages: string[];
+}
+
+export interface ScheduleItem {
+  id: string;
+  contentId: string;
+  accountId: string;
+  publishAt: string;
+  timezone: string;
+  status: JobStatus;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CurrentUser {

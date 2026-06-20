@@ -1,4 +1,10 @@
-type MockScenario = "success" | "auth_expired" | "permission_denied";
+type MockScenario =
+  | "success"
+  | "auth_expired"
+  | "permission_denied"
+  | "rate_limit"
+  | "timeout"
+  | "unknown_result";
 
 type NotificationPayload = {
   eventType: string;
@@ -20,6 +26,10 @@ const instagramAccounts = [
     status: "active",
   },
 ];
+const mockPublishResults = new Map<
+  string,
+  { status: "published"; publishedAt: string }
+>();
 
 export function getMockModes() {
   return {
@@ -132,11 +142,82 @@ export function publishToMockInstagram(scenario?: string) {
     };
   }
 
+  if (currentScenario === "rate_limit") {
+    return {
+      ok: false as const,
+      status: 429,
+      error: {
+        code: "RATE_LIMIT",
+        message: "Instagram Graph API モックがレート制限を返しました。",
+        details: [],
+      },
+    };
+  }
+
+  if (currentScenario === "timeout") {
+    return {
+      ok: false as const,
+      status: 504,
+      error: {
+        code: "TIMEOUT",
+        message: "Instagram Graph API モックがタイムアウトを返しました。",
+        details: [],
+      },
+    };
+  }
+
+  if (currentScenario === "unknown_result") {
+    const publishId = `ig_publish_unknown_${Date.now()}`;
+    mockPublishResults.set(publishId, {
+      status: "published",
+      publishedAt: new Date().toISOString(),
+    });
+
+    return {
+      ok: false as const,
+      status: 504,
+      error: {
+        code: "UNKNOWN_RESULT",
+        message: "投稿結果の確認ができませんでした。再照会してください。",
+        details: [{ field: "publishId", reason: publishId }],
+      },
+    };
+  }
+
+  const publishId = `ig_publish_${Date.now()}`;
+  const publishedAt = new Date().toISOString();
+  mockPublishResults.set(publishId, {
+    status: "published",
+    publishedAt,
+  });
+
   return {
     ok: true as const,
-    publishId: `ig_publish_${Date.now()}`,
+    publishId,
     status: "published",
-    publishedAt: new Date().toISOString(),
+    publishedAt,
+  };
+}
+
+export function getMockPublishStatus(publishId: string) {
+  const result = mockPublishResults.get(publishId);
+
+  if (!result) {
+    return {
+      ok: false as const,
+      status: 404,
+      error: {
+        code: "PUBLISH_NOT_FOUND",
+        message: "公開結果が見つかりません。",
+      },
+    };
+  }
+
+  return {
+    ok: true as const,
+    publishId,
+    status: result.status,
+    publishedAt: result.publishedAt,
   };
 }
 

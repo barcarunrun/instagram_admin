@@ -48,12 +48,20 @@
 2. `GET /api/contents` が seed コンテンツを返す
 3. `GET /api/jobs/logs` が posting_jobs の seed データを返す
 4. `GET /api/audit-logs` が audit_logs の seed データを返す
+5. `GET /api/dashboard/summary` が KPI、失敗一覧、未実行一覧、要再認可アカウントを返す
 
 ### 開発品質確認
 
 1. backend: `npm run typecheck`
 2. frontend: `npm run typecheck`
 3. worker: `npm run typecheck`
+
+### 要件 6 の確認
+
+1. ダッシュボードで投稿実行率、週次投稿本数、失敗件数、未実行件数が表示される
+2. ダッシュボードで失敗投稿一覧と KPI 未達アラートが表示される
+3. カレンダー画面で Day / Week / Month の切替と予約イベント表示を確認できる
+4. Playwright の `e2e/operations-visibility.spec.ts` が成功する
 
 ## テストスケジュール
 
