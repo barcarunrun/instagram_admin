@@ -9,7 +9,11 @@ import path from "node:path";
 import multer from "multer";
 import { fileTypeFromBuffer } from "file-type";
 import { z } from "zod";
-import { recordAuditLog, store } from "../domain/postgres-store.js";
+import {
+  recordAuditLog,
+  StoreConflictError,
+  store,
+} from "../domain/postgres-store.js";
 import {
   authenticateUser,
   createAccessToken,
@@ -33,12 +37,17 @@ import {
 import {
   completeMockOAuthCallback,
   createMockOAuthStart,
+  getMockPublishStatus,
   getMockInstagramAccounts,
   getMockModes,
   publishToMockInstagram,
   sendMockNotification,
 } from "../lib/local-mocks.js";
-import { checkRedisConnection, getRedisConnectionInfo } from "../lib/redis.js";
+import {
+  checkRedisConnection,
+  enqueuePostingJob,
+  getRedisConnectionInfo,
+} from "../lib/redis.js";
 import { encryptToken } from "../lib/token-crypto.js";
 
 const router = Router();
@@ -57,19 +66,46 @@ const allowedMimeTypes = new Set([
 const maxImageFileSize = 10 * 1024 * 1024;
 const maxVideoFileSize = 100 * 1024 * 1024;
 
-const contentSchema = z.object({
+const contentConfigSchema = z.object({
+  orderedMediaAssetIds: z.array(z.string()).optional(),
+  coverAssetId: z.string().min(1).optional(),
+  templateKey: z.string().min(1).optional(),
+  settings: z.record(z.unknown()).optional(),
+});
+
+const contentBaseSchema = z.object({
   title: z.string().min(1),
   contentType: z.enum(["image", "video", "carousel", "reel", "extension"]),
   caption: z.string().min(1),
   hashtags: z.array(z.string()).default([]),
   labels: z.array(z.string()).default([]),
   mediaAssetIds: z.array(z.string()).min(1),
+  contentConfig: contentConfigSchema.default({}),
   approvalStatus: z
     .enum(["not_required", "pending", "approved", "rejected"])
     .default("not_required"),
   createdBy: z.string().default("user_demo"),
   updatedBy: z.string().default("user_demo"),
 });
+
+const contentSchema = contentBaseSchema.superRefine((data, ctx) => {
+  if (
+    data.contentType === "carousel" &&
+    data.contentConfig.orderedMediaAssetIds &&
+    data.contentConfig.orderedMediaAssetIds.length > 0 &&
+    data.contentConfig.orderedMediaAssetIds.length !== data.mediaAssetIds.length
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["contentConfig", "orderedMediaAssetIds"],
+      message: "カルーセル順序は選択済みメディア数と一致させてください。",
+    });
+  }
+});
+
+const partialContentSchema = contentBaseSchema
+  .partial()
+  .extend({ contentConfig: contentConfigSchema.optional() });
 
 const scheduleSchema = z.object({
   contentId: z.string().min(1),
@@ -83,12 +119,45 @@ const loginSchema = z.object({
   password: z.string().min(8),
 });
 
+const dashboardRangeSchema = z
+  .object({
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+  })
+  .refine(
+    (value) => {
+      if (!value.from || !value.to) {
+        return true;
+      }
+
+      return new Date(value.from).getTime() <= new Date(value.to).getTime();
+    },
+    {
+      message: "from は to 以下である必要があります。",
+      path: ["from"],
+    },
+  );
+
+const internalJobCompleteSchema = z.object({
+  externalPublishId: z.string().min(1).optional(),
+  responsePayload: z.record(z.unknown()).optional(),
+  publishedAt: z.string().datetime().optional(),
+});
+
+const internalJobFailSchema = z.object({
+  statusCode: z.number().int().optional(),
+  code: z.string().min(1).optional(),
+  message: z.string().min(1).optional(),
+});
+
 const notificationSchema = z.object({
   eventType: z.string().min(1),
   channel: z.enum(["email", "chat", "audit"]),
   message: z.string().min(1),
   metadata: z.record(z.unknown()).optional(),
 });
+const workerInternalToken =
+  process.env.WORKER_INTERNAL_TOKEN ?? "local_worker_token";
 
 const instagramOAuthStartSchema = z.object({
   intent: z.enum(["connect", "reauthorize"]).default("connect"),
@@ -128,6 +197,24 @@ function asyncHandler(
   return (request: Request, response: Response, next: NextFunction) => {
     void handler(request, response, next).catch(next);
   };
+}
+
+function requireInternalWorkerToken(
+  request: Request,
+  response: Response,
+  next: NextFunction,
+): void {
+  if (request.header("x-worker-token") !== workerInternalToken) {
+    sendError(
+      response,
+      401,
+      "UNAUTHORIZED",
+      "Worker internal token が無効です。",
+    );
+    return;
+  }
+
+  next();
 }
 
 function runUploadMiddleware(
@@ -370,10 +457,151 @@ router.post(
         publishResult.status,
         publishResult.error.code,
         publishResult.error.message,
+        publishResult.error.details,
       );
     }
 
     response.status(201).json(publishResult);
+  }),
+);
+
+router.get(
+  "/local/instagram/publish-status/:publishId",
+  asyncHandler(async (request, response) => {
+    const publishResult = getMockPublishStatus(
+      String(request.params.publishId),
+    );
+
+    if (!publishResult.ok) {
+      return sendError(
+        response,
+        publishResult.status,
+        publishResult.error.code,
+        publishResult.error.message,
+      );
+    }
+
+    response.json(publishResult);
+  }),
+);
+
+router.post(
+  "/internal/jobs/:jobId/start",
+  requireInternalWorkerToken,
+  asyncHandler(async (request, response) => {
+    try {
+      const started = await store.startPostingJob(String(request.params.jobId));
+      if (!started) {
+        return sendError(
+          response,
+          404,
+          "RESOURCE_NOT_FOUND",
+          "ジョブが見つからないか、開始できません。",
+        );
+      }
+      response.status(202).json({ ok: true });
+    } catch (error) {
+      if (error instanceof StoreConflictError) {
+        return sendError(response, 409, "JOB_CONFLICT", error.message);
+      }
+
+      throw error;
+    }
+  }),
+);
+
+router.get(
+  "/internal/jobs/:jobId/payload",
+  requireInternalWorkerToken,
+  asyncHandler(async (request, response) => {
+    const payload = await store.getPostingJobExecutionPayload(
+      String(request.params.jobId),
+    );
+
+    if (!payload) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "ジョブ実行ペイロードが見つかりません。",
+      );
+    }
+
+    response.json(payload);
+  }),
+);
+
+router.post(
+  "/internal/jobs/:jobId/complete",
+  requireInternalWorkerToken,
+  asyncHandler(async (request, response) => {
+    const result = internalJobCompleteSchema.safeParse(request.body);
+
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "完了ペイロードを確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+
+    const completed = await store.completePostingJob({
+      jobId: String(request.params.jobId),
+      ...result.data,
+    });
+
+    if (!completed) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "ジョブが見つかりません。",
+      );
+    }
+
+    response.json({ ok: true });
+  }),
+);
+
+router.post(
+  "/internal/jobs/:jobId/fail",
+  requireInternalWorkerToken,
+  asyncHandler(async (request, response) => {
+    const result = internalJobFailSchema.safeParse(request.body);
+
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "失敗ペイロードを確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+
+    const failed = await store.failPostingJob({
+      jobId: String(request.params.jobId),
+      ...result.data,
+    });
+
+    if (!failed) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "ジョブが見つかりません。",
+      );
+    }
+
+    response.json({ ok: true });
   }),
 );
 
@@ -787,7 +1015,7 @@ router.post(
 router.put(
   "/contents/:id",
   asyncHandler(async (request, response) => {
-    const result = contentSchema.partial().safeParse(request.body);
+    const result = partialContentSchema.safeParse(request.body);
     if (!result.success) {
       return sendError(
         response,
@@ -844,7 +1072,26 @@ router.post(
 router.post(
   "/contents/:id/validate",
   asyncHandler(async (request, response) => {
-    const validation = await store.validateContent(String(request.params.id));
+    const patchResult = partialContentSchema.safeParse(request.body ?? {});
+    if (!patchResult.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "入力内容を確認してください。",
+        patchResult.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+
+    const validation = Object.keys(patchResult.data).length
+      ? await store.previewContentValidation(
+          String(request.params.id),
+          patchResult.data,
+        )
+      : await store.validateContent(String(request.params.id));
     if (!validation) {
       return sendError(
         response,
@@ -919,24 +1166,206 @@ router.post(
 );
 
 router.get(
+  "/schedules/content/:contentId",
+  asyncHandler(async (request, response) => {
+    const schedule = await store.getLatestScheduleForContent(
+      String(request.params.contentId),
+    );
+
+    if (!schedule) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "スケジュールが見つかりません。",
+      );
+    }
+
+    response.json(schedule);
+  }),
+);
+
+router.get(
+  "/schedules/:id",
+  asyncHandler(async (request, response) => {
+    const schedule = await store.getScheduleById(String(request.params.id));
+
+    if (!schedule) {
+      return sendError(
+        response,
+        404,
+        "RESOURCE_NOT_FOUND",
+        "スケジュールが見つかりません。",
+      );
+    }
+
+    response.json(schedule);
+  }),
+);
+
+router.put(
+  "/schedules/:id",
+  asyncHandler(async (request, response) => {
+    const result = scheduleSchema.safeParse(request.body);
+    if (!result.success) {
+      return sendError(
+        response,
+        400,
+        "VALIDATION_ERROR",
+        "入力内容を確認してください。",
+        result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          reason: issue.code,
+        })),
+      );
+    }
+
+    const validation = await store.validateSchedule({
+      ...result.data,
+      excludeScheduleId: String(request.params.id),
+    });
+    if (!validation.valid) {
+      return sendError(
+        response,
+        409,
+        "CONFLICT",
+        validation.messages[0],
+        validation.messages.map((message) => ({
+          field: "publishAt",
+          reason: message,
+        })),
+      );
+    }
+
+    try {
+      const updated = await store.updateSchedule(
+        String(request.params.id),
+        result.data,
+        request.authUser?.name ?? "user_demo",
+        { requestId: request.requestId },
+      );
+
+      if (!updated) {
+        return sendError(
+          response,
+          404,
+          "RESOURCE_NOT_FOUND",
+          "スケジュールが見つかりません。",
+        );
+      }
+
+      response.json(updated);
+    } catch (error) {
+      if (error instanceof StoreConflictError) {
+        return sendError(response, 409, "CONFLICT", error.message, [
+          { field: "status", reason: error.message },
+        ]);
+      }
+
+      throw error;
+    }
+  }),
+);
+
+router.delete(
+  "/schedules/:id",
+  asyncHandler(async (request, response) => {
+    try {
+      const cancelled = await store.cancelSchedule(
+        String(request.params.id),
+        request.authUser?.name ?? "user_demo",
+        { requestId: request.requestId },
+      );
+
+      if (!cancelled) {
+        return sendError(
+          response,
+          404,
+          "RESOURCE_NOT_FOUND",
+          "スケジュールが見つかりません。",
+        );
+      }
+
+      response.json(cancelled);
+    } catch (error) {
+      if (error instanceof StoreConflictError) {
+        return sendError(response, 409, "CONFLICT", error.message, [
+          { field: "status", reason: error.message },
+        ]);
+      }
+
+      throw error;
+    }
+  }),
+);
+
+router.get(
   "/calendar/events",
-  asyncHandler(async (_request, response) => {
-    response.json({ items: await store.getCalendarEvents() });
+  asyncHandler(async (request, response) => {
+    const range = dashboardRangeSchema.safeParse({
+      from: typeof request.query.from === "string" ? request.query.from : undefined,
+      to: typeof request.query.to === "string" ? request.query.to : undefined,
+    });
+
+    if (!range.success) {
+      sendError(response, 400, "invalid_request", range.error.issues[0]?.message);
+      return;
+    }
+
+    response.json({ items: await store.getCalendarEvents(range.data) });
   }),
 );
 
 router.get(
   "/dashboard/kpi",
-  asyncHandler(async (_request, response) => {
-    response.json(await store.getDashboardKpi());
+  asyncHandler(async (request, response) => {
+    const range = dashboardRangeSchema.safeParse({
+      from: typeof request.query.from === "string" ? request.query.from : undefined,
+      to: typeof request.query.to === "string" ? request.query.to : undefined,
+    });
+
+    if (!range.success) {
+      sendError(response, 400, "invalid_request", range.error.issues[0]?.message);
+      return;
+    }
+
+    response.json(await store.getDashboardKpi(range.data));
   }),
 );
 
 router.get(
   "/dashboard/alerts",
-  asyncHandler(async (_request, response) => {
+  asyncHandler(async (request, response) => {
+    const range = dashboardRangeSchema.safeParse({
+      from: typeof request.query.from === "string" ? request.query.from : undefined,
+      to: typeof request.query.to === "string" ? request.query.to : undefined,
+    });
+
+    if (!range.success) {
+      sendError(response, 400, "invalid_request", range.error.issues[0]?.message);
+      return;
+    }
+
     await refreshInstagramStatuses();
-    response.json({ items: await store.getDashboardAlerts() });
+    response.json({ items: await store.getDashboardAlerts(range.data) });
+  }),
+);
+
+router.get(
+  "/dashboard/summary",
+  asyncHandler(async (request, response) => {
+    const range = dashboardRangeSchema.safeParse({
+      from: typeof request.query.from === "string" ? request.query.from : undefined,
+      to: typeof request.query.to === "string" ? request.query.to : undefined,
+    });
+
+    if (!range.success) {
+      sendError(response, 400, "invalid_request", range.error.issues[0]?.message);
+      return;
+    }
+
+    await refreshInstagramStatuses();
+    response.json(await store.getDashboardSummary(range.data));
   }),
 );
 
@@ -963,6 +1392,16 @@ router.post(
         "ジョブが見つかりません。",
       );
     }
+
+    const queueMessage = await store.getPostingJobQueueMessage(
+      retried.id,
+      "manual_retry",
+    );
+
+    if (queueMessage) {
+      await enqueuePostingJob(queueMessage);
+    }
+
     response.json(retried);
   }),
 );

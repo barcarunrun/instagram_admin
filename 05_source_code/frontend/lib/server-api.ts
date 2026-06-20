@@ -6,6 +6,7 @@ import type {
   CurrentUser,
   DashboardAlert,
   DashboardKpi,
+  DashboardSummary,
   InstagramIntegration,
   JobLog,
   MediaAsset,
@@ -40,6 +41,21 @@ async function serverFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function createDashboardQuery(range?: { from?: string; to?: string }): string {
+  const params = new URLSearchParams();
+
+  if (range?.from) {
+    params.set("from", range.from);
+  }
+
+  if (range?.to) {
+    params.set("to", range.to);
+  }
+
+  const query = params.toString();
+  return query.length > 0 ? `?${query}` : "";
+}
+
 export const serverApi = {
   getCurrentUser(): Promise<{ user: CurrentUser }> {
     return serverFetch<{ user: CurrentUser }>("/auth/me");
@@ -57,16 +73,37 @@ export const serverApi = {
     return serverFetch<{ items: MediaAsset[] }>("/media-assets");
   },
 
-  getDashboardKpi(): Promise<DashboardKpi> {
-    return serverFetch<DashboardKpi>("/dashboard/kpi");
+  getDashboardKpi(range?: { from?: string; to?: string }): Promise<DashboardKpi> {
+    return serverFetch<DashboardKpi>(
+      `/dashboard/kpi${createDashboardQuery(range)}`,
+    );
   },
 
-  getDashboardAlerts(): Promise<{ items: DashboardAlert[] }> {
-    return serverFetch<{ items: DashboardAlert[] }>("/dashboard/alerts");
+  getDashboardAlerts(range?: {
+    from?: string;
+    to?: string;
+  }): Promise<{ items: DashboardAlert[] }> {
+    return serverFetch<{ items: DashboardAlert[] }>(
+      `/dashboard/alerts${createDashboardQuery(range)}`,
+    );
   },
 
-  getCalendarEvents(): Promise<{ items: CalendarEvent[] }> {
-    return serverFetch<{ items: CalendarEvent[] }>("/calendar/events");
+  getDashboardSummary(range?: {
+    from?: string;
+    to?: string;
+  }): Promise<DashboardSummary> {
+    return serverFetch<DashboardSummary>(
+      `/dashboard/summary${createDashboardQuery(range)}`,
+    );
+  },
+
+  getCalendarEvents(range?: {
+    from?: string;
+    to?: string;
+  }): Promise<{ items: CalendarEvent[] }> {
+    return serverFetch<{ items: CalendarEvent[] }>(
+      `/calendar/events${createDashboardQuery(range)}`,
+    );
   },
 
   getJobLogs(): Promise<{ items: JobLog[] }> {

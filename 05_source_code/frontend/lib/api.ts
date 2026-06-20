@@ -4,10 +4,12 @@ import type {
   CurrentUser,
   DashboardAlert,
   DashboardKpi,
+  DashboardSummary,
   InstagramIntegration,
   InstagramOAuthSession,
   JobLog,
   MediaAsset,
+  ScheduleItem,
   ScheduleValidationResult,
 } from "./types";
 
@@ -53,6 +55,21 @@ async function uploadFile<T>(path: string, formData: FormData): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+function createDashboardQuery(range?: { from?: string; to?: string }): string {
+  const params = new URLSearchParams();
+
+  if (range?.from) {
+    params.set("from", range.from);
+  }
+
+  if (range?.to) {
+    params.set("to", range.to);
+  }
+
+  const query = params.toString();
+  return query.length > 0 ? `?${query}` : "";
 }
 
 export const api = {
@@ -162,6 +179,16 @@ export const api = {
     });
   },
 
+  previewContentValidation(
+    id: string,
+    payload: Partial<ContentItem>,
+  ): Promise<ContentItem["validation"]> {
+    return apiFetch<ContentItem["validation"]>(`/contents/${id}/validate`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   getMediaAssets(): Promise<{ items: MediaAsset[] }> {
     return apiFetch<{ items: MediaAsset[] }>("/media-assets");
   },
@@ -189,23 +216,71 @@ export const api = {
     publishAt: string;
     timezone: string;
     accountId: string;
-  }) {
-    return apiFetch("/schedules", {
+  }): Promise<ScheduleItem> {
+    return apiFetch<ScheduleItem>("/schedules", {
       method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
-  getDashboardKpi(): Promise<DashboardKpi> {
-    return apiFetch<DashboardKpi>("/dashboard/kpi");
+  getScheduleForContent(contentId: string): Promise<ScheduleItem> {
+    return apiFetch<ScheduleItem>(`/schedules/content/${contentId}`);
   },
 
-  getDashboardAlerts(): Promise<{ items: DashboardAlert[] }> {
-    return apiFetch<{ items: DashboardAlert[] }>("/dashboard/alerts");
+  getSchedule(id: string): Promise<ScheduleItem> {
+    return apiFetch<ScheduleItem>(`/schedules/${id}`);
   },
 
-  getCalendarEvents(): Promise<{ items: CalendarEvent[] }> {
-    return apiFetch<{ items: CalendarEvent[] }>("/calendar/events");
+  updateSchedule(
+    id: string,
+    payload: {
+      contentId: string;
+      publishAt: string;
+      timezone: string;
+      accountId: string;
+    },
+  ): Promise<ScheduleItem> {
+    return apiFetch<ScheduleItem>(`/schedules/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  cancelSchedule(id: string): Promise<ScheduleItem> {
+    return apiFetch<ScheduleItem>(`/schedules/${id}`, {
+      method: "DELETE",
+    });
+  },
+
+  getDashboardKpi(range?: { from?: string; to?: string }): Promise<DashboardKpi> {
+    return apiFetch<DashboardKpi>(`/dashboard/kpi${createDashboardQuery(range)}`);
+  },
+
+  getDashboardAlerts(range?: {
+    from?: string;
+    to?: string;
+  }): Promise<{ items: DashboardAlert[] }> {
+    return apiFetch<{ items: DashboardAlert[] }>(
+      `/dashboard/alerts${createDashboardQuery(range)}`,
+    );
+  },
+
+  getDashboardSummary(range?: {
+    from?: string;
+    to?: string;
+  }): Promise<DashboardSummary> {
+    return apiFetch<DashboardSummary>(
+      `/dashboard/summary${createDashboardQuery(range)}`,
+    );
+  },
+
+  getCalendarEvents(range?: {
+    from?: string;
+    to?: string;
+  }): Promise<{ items: CalendarEvent[] }> {
+    return apiFetch<{ items: CalendarEvent[] }>(
+      `/calendar/events${createDashboardQuery(range)}`,
+    );
   },
 
   getJobLogs(): Promise<{ items: JobLog[] }> {
