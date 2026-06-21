@@ -26,7 +26,8 @@ import { extractMediaMetadata } from "../lib/media-metadata.js";
 import {
   deleteStoredMediaFile,
   getStoredMediaPath,
-  writeMediaToLocalStorage,
+  isStoredRemotely,
+  writeMediaToStorage,
 } from "../lib/media-storage.js";
 import {
   consumeInstagramOAuthSession,
@@ -703,13 +704,14 @@ router.post(
       return response.status(200).json(existing);
     }
 
-    const storedPath = await writeMediaToLocalStorage({
+    const storedMedia = await writeMediaToStorage({
       storageKey,
       buffer: file.buffer,
+      contentType: mimeType,
     });
     const metadata = await extractMediaMetadata({
       buffer: file.buffer,
-      filePath: storedPath,
+      filePath: storedMedia.filePath,
       mimeType,
     });
     const asset = await store.createMediaAsset({
@@ -723,7 +725,8 @@ router.post(
       durationSeconds: metadata.durationSeconds,
       url: "/api/media-assets/pending/file",
     });
-    const finalizedUrl = `/api/media-assets/${asset.id}/file`;
+    const finalizedUrl =
+      storedMedia.publicUrl ?? `/api/media-assets/${asset.id}/file`;
     const updated = await store.updateMediaAssetUrl(asset.id, finalizedUrl);
 
     await recordAuditLog({
@@ -763,6 +766,10 @@ router.get(
         "RESOURCE_NOT_FOUND",
         "保存済みメディアが見つかりません。",
       );
+    }
+
+    if (isStoredRemotely(asset.url)) {
+      return response.redirect(asset.url);
     }
 
     response.type(asset.mimeType);

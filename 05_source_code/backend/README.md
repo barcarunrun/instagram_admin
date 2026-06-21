@@ -37,6 +37,9 @@ INSTAGRAM_API_MODE=mock
 OAUTH_MODE=mock
 NOTIFICATION_MODE=log
 PUBLIC_API_BASE_URL=
+MEDIA_STORAGE_MODE=local
+AZURE_STORAGE_CONNECTION_STRING=
+AZURE_STORAGE_CONTAINER_NAME=
 MOCK_OAUTH_CALLBACK_URL=http://localhost:4000/api/local/oauth/callback
 MOCK_OAUTH_EXPECTED_STATE=mock_state_demo
 ```
@@ -109,15 +112,17 @@ npm run typecheck
 - 入力バリデーションは Zod で実施します。
 - エラー応答は `error.code`、`error.message`、`error.details`、`error.requestId` を含む JSON 形式です。
 - real 投稿では `PUBLIC_API_BASE_URL` に Instagram Graph API から到達可能な `https` 公開 URL を設定する必要があります。
+- `MEDIA_STORAGE_MODE=azure_blob` を設定すると、アップロード済みメディアを Azure Blob Storage に保存し、`media_assets.url` へ blob の `https` URL を保存します。
 
 ## Real Instagram 投稿
 
 1. `.env` で `INSTAGRAM_API_MODE=real` を設定する
 2. `IG_ACCESS_TOKEN` と `IG_USER_ID` を設定する
 3. `PUBLIC_API_BASE_URL` に backend の公開 URL を設定する
-4. `POST /api/integrations/instagram/bootstrap-existing-token` を呼び出す
-5. 返ってきた `oauthSessionId` と対象 `accountId` で `POST /api/integrations/instagram/connect` を呼び、active な integration を保存する
-6. メディアが `https` で取得できることを確認したうえで、予約投稿を実行する
+4. Azure Blob Storage を使う場合は `MEDIA_STORAGE_MODE=azure_blob`、`AZURE_STORAGE_CONNECTION_STRING`、`AZURE_STORAGE_CONTAINER_NAME` を設定する
+5. `POST /api/integrations/instagram/bootstrap-existing-token` を呼び出す
+6. 返ってきた `oauthSessionId` と対象 `accountId` で `POST /api/integrations/instagram/connect` を呼び、active な integration を保存する
+7. メディアが `https` で取得できることを確認したうえで、予約投稿を実行する
 
 ## ディレクトリ構成
 
