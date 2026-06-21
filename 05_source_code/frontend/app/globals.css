@@ -653,7 +653,8 @@ a:focus-visible {
 .field input,
 .field select,
 .field textarea,
-.media-filter-grid input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.media-filter-grid
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
 .media-filter-grid select,
 .search-input,
 .filter-select {

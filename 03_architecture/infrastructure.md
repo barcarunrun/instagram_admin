@@ -4,22 +4,23 @@
 
 ### ホスティング
 
-- クラウド: AWS を第一候補とする。
-- リージョン: ap-northeast-1（東京）
-- フロントエンド: Vercel または AWS Amplify
+- クラウド: Azure を第一候補とする。
+- リージョン: Japan East または Japan West を候補とする。
+- MVP 期間は環境分離よりコスト最適化を優先し、単一環境で実投稿確認を成立させる。
 
 ### サーバー構成
 
-- Frontend: 1サービス（自動スケール）
-- API: 2インスタンス以上で冗長化
-- Worker: 2インスタンス以上で冗長化
-- DB: マネージドPostgreSQL（Multi-AZ）
-- Redis: マネージドRedis（フェイルオーバー有効）
+- Frontend: ローカル運用を基本とし、クラウド配備は後続タスクとする。
+- API: MVP ではローカル起動を基本とし、`05_source_code/scripts/local-stack.sh` で運用確認する。
+- Worker: MVP ではローカル起動を基本とし、backend と同じローカル構成で実投稿確認する。
+- DB: PostgreSQL はローカルコンテナを利用する。
+- Redis: Redis はローカルコンテナを利用する。
+- ファイル保存: Azure Blob Storage を使用し、Instagram Graph API が取得可能な https URL を返す。
 
 ### CDN
 
-- 静的アセット配信にCDNを使用する。
-- 画像・JS・CSSをキャッシュし、管理画面HTMLは短TTLとする。
+- MVP では CDN を必須としない。
+- Blob Storage の公開 URL でメディア配信を成立させ、必要になった時点で CDN や Front Door を追加する。
 
 ### キャッシング戦略
 
@@ -29,9 +30,9 @@
 
 ## ステージング環境
 
-- 本番相当構成を縮小版で用意する。
-- Instagram APIの実連携検証用に検証アカウントを用意する。
-- 外部通知は検証専用チャネルに送る。
+- MVP 期間は専用ステージング環境を必須としない。
+- 実投稿の疎通確認は単一 Azure 環境と検証用 Instagram アカウントで行う。
+- 環境分離は MVP 以後の拡張タスクとする。
 
 ## 開発環境
 
@@ -44,12 +45,13 @@
 
 ## デプロイメント
 
-- GitHub Actionsを用いてテスト、ビルド、デプロイを自動化する。
-- mainブランチへのマージでステージング、自動承認後に本番デプロイする。
-- DBマイグレーションはリリースパイプライン内で実行する。
+- MVP では再現可能な手動デプロイ手順を先に整備し、その後 GitHub Actions による自動化を追加する。
+- Azure で作成する対象は Blob Storage のみとし、backend / worker / DB / Redis のデプロイは行わない。
+- DB マイグレーションはローカル backend 起動手順に含め、worker より先に適用する。
+- `MEDIA_STORAGE_MODE=azure_blob` と Storage 接続情報をローカル backend に設定し、メディア本体は Blob Storage の https URL を優先する。
 
 ## スケーリング
 
-- APIはCPU/メモリとリクエスト数を基準に水平スケールする。
-- Workerは待機ジョブ数と再試行ジョブ数を基準に水平スケールする。
-- スパイク時はアカウント単位の実行制御でInstagram API制限を守る。
+- API は MVP ではローカル実行で確認し、常時稼働や水平スケールは後続で判断する。
+- Worker は MVP ではローカル実行で確認し、常時稼働や段階的スケールは後続で判断する。
+- スパイク時はアカウント単位の実行制御で Instagram API 制限を守る。

@@ -272,10 +272,10 @@ async function getMediaUsageSummaries(
   return usageByAssetId;
 }
 
-async function attachMediaUsage(
-  assets: MediaAsset[],
-): Promise<MediaAsset[]> {
-  const usageByAssetId = await getMediaUsageSummaries(assets.map((asset) => asset.id));
+async function attachMediaUsage(assets: MediaAsset[]): Promise<MediaAsset[]> {
+  const usageByAssetId = await getMediaUsageSummaries(
+    assets.map((asset) => asset.id),
+  );
 
   return assets.map((asset) => {
     const usage = usageByAssetId.get(asset.id);
@@ -495,14 +495,16 @@ function toPublicMediaUrl(url: string): string {
   return new URL(url, baseUrl).toString();
 }
 
-function toPublicGraphApiPayload<T extends {
-  graphApi: {
-    mediaUrl?: string;
-    children?: string[];
-    coverUrl?: string;
-  };
-  assets: Array<{ url: string }>;
-}>(payload: T): T {
+function toPublicGraphApiPayload<
+  T extends {
+    graphApi: {
+      mediaUrl?: string;
+      children?: string[];
+      coverUrl?: string;
+    };
+    assets: Array<{ url: string }>;
+  },
+>(payload: T): T {
   return {
     ...payload,
     graphApi: {

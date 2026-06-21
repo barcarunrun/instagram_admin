@@ -4,6 +4,8 @@
 
 このランブックは、ローカル MVP 環境で frontend / backend / worker / PostgreSQL / Redis を運用確認するための手順をまとめる。
 
+Azure Blob Storage のみを併用して Instagram 実投稿を確認する場合の最小手順も末尾にまとめる。
+
 作業ディレクトリ:
 
 ```bash
@@ -218,6 +220,60 @@ curl http://localhost:4000/api/health
 - backend health の応答確認
 - compose サービス状態確認
 - backend ログのエラー確認
+
+## Azure Blob Storage 併用運用
+
+### 1. Storage リソース作成
+
+```bash
+cd /Users/eiichisugiyama/Desktop/job/instagram_development/05_source_code/infra/azure
+
+az group create --name rg-igops-mvp --location japaneast
+cp main.parameters.example.json main.parameters.json
+# main.parameters.json に storageAccountName / storageContainerName / blobPublicAccess を設定する
+az deployment group create \
+  --resource-group rg-igops-mvp \
+  --template-file main.bicep \
+  --parameters @main.parameters.json
+```
+
+### 2. ローカル backend 用の Storage 接続を取得する
+
+```bash
+AZURE_STORAGE_CONNECTION_STRING=$(az storage account show-connection-string \
+  --resource-group rg-igops-mvp \
+  --name <storage-account-name> \
+  --query connectionString \
+  -o tsv)
+
+export MEDIA_STORAGE_MODE=azure_blob
+export AZURE_STORAGE_CONNECTION_STRING
+export AZURE_STORAGE_CONTAINER_NAME=<storage-container-name>
+```
+
+### 3. ローカルスタックを起動する
+
+```bash
+cd /Users/eiichisugiyama/Desktop/job/instagram_development/05_source_code
+./scripts/local-stack.sh up
+./scripts/local-db.sh migrate
+./scripts/local-db.sh seed
+```
+
+### 4. 動作確認
+
+```bash
+curl http://localhost:4000/api/health
+./scripts/local-stack.sh logs backend
+./scripts/local-stack.sh logs worker
+```
+
+### 5. 実投稿前の確認
+
+- backend に `IG_ACCESS_TOKEN`、`IG_USER_ID`、`PUBLIC_API_BASE_URL`、`MEDIA_STORAGE_MODE=azure_blob` が設定されていること
+- backend に `AZURE_STORAGE_CONNECTION_STRING` と `AZURE_STORAGE_CONTAINER_NAME` が設定されていること
+- Blob Storage のメディア URL が `https` で取得できること
+- `POST /api/integrations/instagram/bootstrap-existing-token` と `POST /api/integrations/instagram/connect` が完了していること
 
 ### 週次確認
 

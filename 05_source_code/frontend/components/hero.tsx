@@ -18,7 +18,9 @@ export function Hero({
           <p className="muted">{description}</p>
         </div>
       </div>
-      {actions ? <div className="button-row page-hero-actions">{actions}</div> : null}
+      {actions ? (
+        <div className="button-row page-hero-actions">{actions}</div>
+      ) : null}
     </section>
   );
 }

@@ -226,9 +226,12 @@ export const api = {
   },
 
   deleteMediaAsset(id: string): Promise<{ success: true; asset: MediaAsset }> {
-    return apiFetch<{ success: true; asset: MediaAsset }>(`/media-assets/${id}`, {
-      method: "DELETE",
-    });
+    return apiFetch<{ success: true; asset: MediaAsset }>(
+      `/media-assets/${id}`,
+      {
+        method: "DELETE",
+      },
+    );
   },
 
   validateSchedule(payload: {

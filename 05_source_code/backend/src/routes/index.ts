@@ -1032,7 +1032,8 @@ router.get(
           ? request.query.keyword
           : undefined,
       mediaType:
-        request.query.mediaType === "image" || request.query.mediaType === "video"
+        request.query.mediaType === "image" ||
+        request.query.mediaType === "video"
           ? request.query.mediaType
           : undefined,
       usedOnly: request.query.usedOnly === "true",

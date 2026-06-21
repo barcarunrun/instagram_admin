@@ -48,7 +48,8 @@
 | TASK-054 から TASK-059 | 未着手     | 未着手     | 未確認   | 通知チャネル設定、通知送信、通知 UI、受入テストの実装根拠は未確認。                                                                                                                                                                                         |
 | TASK-060               | 一部実装   | 一部実装   | 未確認   | backend に [05_source_code/backend/src/lib/instagram-oauth.test.ts](05_source_code/backend/src/lib/instagram-oauth.test.ts) はあるが、API・Worker 単体テスト拡充は未完。                                                                                    |
 | TASK-061               | 一部実装   | 一部実装   | 未確認   | E2E は連携導線のみ実装済みで、下書き、予約、失敗復旧、通知までは未網羅。                                                                                                                                                                                    |
-| TASK-062 から TASK-064 | 未着手     | 未着手     | 未確認   | 性能検証、監視整理、クラウド移行準備の実施根拠は未確認。                                                                                                                                                                                                    |
+| TASK-062 から TASK-064 | 未着手     | 未着手     | 未確認   | 性能検証、監視整理、低コスト Azure MVP 移行準備の実施根拠は未確認。                                                                                                                                                                                         |
+| TASK-066 から TASK-068 | 一部実装   | 未着手     | 未確認   | Azure Blob Storage の最小 Bicep、storage-only README、手動運用手順の叩き台は追加済み。backend / worker はローカル運用前提へ見直し中で、Blob 接続を使った実投稿確認は未実施。                                                                             |
 | TASK-065               | 実装済み   | 実装済み   | 未確認   | 専用メディア管理ページ、メディア一覧の利用状況表示、未使用メディア削除、サイドバー導線を追加。backend / frontend の typecheck と lint、Playwright の media-management spec をローカルで確認対象とする。                                                                 |
 
 ## 共通基盤（ローカル開発優先）
@@ -215,7 +216,7 @@
 10. **TASK-065**: メディア管理画面UI/API実装
    - 説明: 専用メディア管理ページを追加し、アップロード済みメディアの検索、利用状況表示、未使用メディア削除を実装する。
    - 補足: `/media` ページ、`GET /media-assets` の利用状況要約、`DELETE /media-assets/:id`、サイドバー導線、Playwright の管理ページ受入テストを対象とする。
-   - ステータス: 実装済み（2026-06-20、ローカル検証中）
+   - ステータス: 実装済み（2026-06-20、CI未確認）
    - ストーリーポイント: 5
    - 担当者: Frontend / Backend
    - 依存タスク: TASK-008, TASK-010, TASK-015
@@ -462,7 +463,7 @@
 1. **TASK-041**: KPI集計ロジック実装
    - 説明: 投稿実行率、週次投稿本数、失敗件数、未実行件数を算出する集計処理を実装する。
    - 補足: 投稿実行率、週次投稿本数、失敗件数に加え、期間指定で未実行件数を返す集計へ補正済み。
-   - ステータス: 実装済み（2026-06-20、CI未確認）
+   - ステータス: 実装済み（2026-06-20、CI確認済み）
    - ストーリーポイント: 5
    - 担当者: Backend
    - 依存タスク: TASK-034, TASK-030
@@ -471,7 +472,7 @@
 2. **TASK-042**: ダッシュボードAPI実装
    - 説明: 期間指定で KPI、失敗一覧、未実行一覧、要再認可アカウントを返す API を実装する。
    - 補足: `GET /api/dashboard/summary` を追加し、KPI、失敗一覧、未実行一覧、要再認可アカウントを返却可能。既存 KPI / alert / calendar API も期間指定に対応済み。
-   - ステータス: 実装済み（2026-06-20、CI未確認）
+   - ステータス: 実装済み（2026-06-20、CI確認済み）
    - ストーリーポイント: 3
    - 担当者: Backend
    - 依存タスク: TASK-041
@@ -480,7 +481,7 @@
 3. **TASK-043**: ダッシュボード画面UI実装
    - 説明: 投稿実行率、週次投稿本数、失敗件数を確認できるダッシュボード画面を実装する。
    - 補足: KPIカード、失敗ジョブ一覧、未実行一覧、再認可アカウント、期間フィルター、動的チャートを実装済み。
-   - ステータス: 実装済み（2026-06-20、CI未確認）
+   - ステータス: 実装済み（2026-06-20、CI確認済み）
    - ストーリーポイント: 5
    - 担当者: Frontend
    - 依存タスク: TASK-042
@@ -489,7 +490,7 @@
 4. **TASK-044**: 投稿カレンダー画面UI実装
    - 説明: 日 / 週 / 月単位のカレンダーで予約と実績を可視化する画面を実装する。
    - 補足: `05_source_code/frontend/app/calendar/page.tsx` で Day / Week / Month 切替、期間フィルター、状態表示を実装済み。
-   - ステータス: 実装済み（2026-06-20、CI未確認）
+   - ステータス: 実装済み（2026-06-20、CI確認済み）
    - ストーリーポイント: 5
    - 担当者: Frontend
    - 依存タスク: TASK-030
@@ -498,7 +499,7 @@
 5. **TASK-045**: KPI未達アラート実装
    - 説明: 投稿頻度や実行率が基準を下回る見込みのときにアラート対象を算出する。
    - 補足: 投稿実行率しきい値を使った未達アラートを dashboard alert と summary API に統合済み。
-   - ステータス: 実装済み（2026-06-20、CI未確認）
+   - ステータス: 実装済み（2026-06-20、CI確認済み）
    - ストーリーポイント: 3
    - 担当者: Backend
    - 依存タスク: TASK-041
@@ -507,7 +508,7 @@
 6. **TASK-046**: 運用可視化受入テスト実装
    - 説明: KPI表示、カレンダー表示、失敗投稿識別、未達アラート表示をテスト化する。
    - 補足: [05_source_code/frontend/e2e/operations-visibility.spec.ts](05_source_code/frontend/e2e/operations-visibility.spec.ts) で KPI、カレンダー、失敗投稿、未達アラート、再認可対象表示を自動化済み。
-   - ステータス: 実装済み（2026-06-20、CI未確認）
+   - ステータス: 実装済み（2026-06-20、CI確認済み）
    - ストーリーポイント: 3
    - 担当者: QA
    - 依存タスク: TASK-043, TASK-044, TASK-045
@@ -654,11 +655,35 @@
    - 依存タスク: TASK-062
    - 関連PR: 未定
 
-5. **TASK-064**: ローカルMVP完成後のクラウド移行準備
-   - 説明: 障害復旧手順、再認可オペレーション、ロールバック手順を整理し、ローカルMVPをクラウド環境へ移す際の前提条件を明確化する。
+5. **TASK-064**: 低コスト Azure MVP 移行準備
+   - 説明: 障害復旧手順、再認可オペレーション、ロールバック手順を整理し、ローカルMVPを低コストの単一 Azure 環境へ移す前提条件を明確化する。
    - ストーリーポイント: 3
    - 担当者: Platform
    - 依存タスク: TASK-063
+   - 関連PR: 未定
+
+6. **TASK-066**: Azure Blob Storage の最小インフラ定義
+   - 説明: MVP 向けに Instagram Graph API が参照するメディア保存先として、Storage Account と Blob Container だけを Bicep で定義する。
+   - 補足: Azure 常駐リソースは Blob Storage のみに限定し、backend / worker / DB / Redis はローカル運用を継続する。公開 https URL を返せることを完了条件に含める。
+   - ストーリーポイント: 5
+   - 担当者: Platform
+   - 依存タスク: TASK-064
+   - 関連PR: 未定
+
+7. **TASK-067**: ローカル backend から Blob Storage への保存切替確認
+   - 説明: ローカル backend の upload 経路で Azure Blob Storage にアップロードし、https URL を media asset に保存する構成を成立させる。
+   - 補足: `MEDIA_STORAGE_MODE=azure_blob`、`AZURE_STORAGE_CONNECTION_STRING`、`AZURE_STORAGE_CONTAINER_NAME` をローカル backend に設定し、Instagram Graph API が参照する主経路は Blob URL を優先する。
+   - ストーリーポイント: 5
+   - 担当者: Backend
+   - 依存タスク: TASK-066
+   - 関連PR: 未定
+
+8. **TASK-068**: storage-only 手動運用導線整備
+   - 説明: Azure Blob Storage の作成、接続文字列取得、ローカル backend / worker 起動、Blob URL 確認までを再現可能な手順として整備する。
+   - 補足: MVP では GitHub Actions 自動化や Azure 上の app 配備より先に、低コストな storage-only 構成での手動運用手順を優先する。
+   - ストーリーポイント: 3
+   - 担当者: Platform
+   - 依存タスク: TASK-066, TASK-067
    - 関連PR: 未定
 
 ## 優先実装順
@@ -667,4 +692,5 @@
 2. TASK-005 から TASK-024 でローカルから触れる連携、下書き、投稿種別のソースコードを優先実装する。
 3. TASK-025 から TASK-040 で予約と実行制御をローカル完結で成立させる。
 4. TASK-041 から TASK-059 で可視化、承認、通知、監査を追加する。
-5. TASK-060 から TASK-064 でローカルMVPの品質保証を終え、その後のクラウド移行準備へ進む。
+5. TASK-060 から TASK-064 でローカルMVPの品質保証と低コスト Azure 移行前提を整理する。
+6. TASK-066 から TASK-068 で Azure Blob Storage のみを整備し、ローカル backend / worker からの実投稿確認へ進む。

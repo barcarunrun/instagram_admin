@@ -29,7 +29,8 @@ function getAzureStorageConfig(): {
 
 async function getBlobContainerClient() {
   const { connectionString, containerName } = getAzureStorageConfig();
-  const serviceClient = BlobServiceClient.fromConnectionString(connectionString);
+  const serviceClient =
+    BlobServiceClient.fromConnectionString(connectionString);
   const containerClient = serviceClient.getContainerClient(containerName);
 
   await containerClient.createIfNotExists();

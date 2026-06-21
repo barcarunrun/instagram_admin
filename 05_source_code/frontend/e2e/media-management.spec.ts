@@ -1,4 +1,11 @@
-import { expect, request, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
+import {
+  expect,
+  request,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
 
 const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_ORIGIN ??
@@ -143,12 +150,16 @@ async function createApprovedContent(
 test.describe("TASK-065 Media management", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("TC-209: メディア管理ページで一覧とアップロードを確認できる", async ({ page }) => {
+  test("TC-209: メディア管理ページで一覧とアップロードを確認できる", async ({
+    page,
+  }) => {
     const fileName = `${uniqueTitle("media_page")}.png`;
 
     await login(page);
     await page.goto("/media");
-    await expect(page.getByRole("heading", { name: "メディア管理" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "メディア管理" }),
+    ).toBeVisible();
     await page.locator('input[type="file"]').setInputFiles({
       name: fileName,
       mimeType: "image/png",
@@ -156,7 +167,9 @@ test.describe("TASK-065 Media management", () => {
     });
 
     await expect(page.getByText("1件のメディアを登録しました。")).toBeVisible();
-    const uploadedCard = page.getByRole("button", { name: new RegExp(fileName) });
+    const uploadedCard = page.getByRole("button", {
+      name: new RegExp(fileName),
+    });
     await expect(uploadedCard).toBeVisible();
     await expect(uploadedCard.getByText("未使用")).toBeVisible();
   });
@@ -171,14 +184,18 @@ test.describe("TASK-065 Media management", () => {
       mimeType: "image/png",
       buffer: uniquePngBuffer(),
     });
-    await expect(page.getByRole("button", { name: new RegExp(fileName) })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: new RegExp(fileName) }),
+    ).toBeVisible();
     await page.getByRole("button", { name: new RegExp(fileName) }).click();
 
     page.once("dialog", (dialog) => dialog.accept());
     await page.getByRole("button", { name: "メディアを削除" }).click();
 
     await expect(page.getByText("メディアを削除しました。")).toBeVisible();
-    await expect(page.getByRole("button", { name: new RegExp(fileName) })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: new RegExp(fileName) }),
+    ).toHaveCount(0);
   });
 
   test("TC-211: 利用中メディアは削除できない", async ({ page }) => {
@@ -201,12 +218,18 @@ test.describe("TASK-065 Media management", () => {
       });
 
       await page.goto("/media");
-  const usedCard = page.getByRole("button", { name: new RegExp(asset.fileName) });
-  await usedCard.click();
-  await expect(usedCard.getByText(/使用中 1件/)).toBeVisible();
-      await expect(page.getByRole("button", { name: "メディアを削除" })).toBeDisabled();
+      const usedCard = page.getByRole("button", {
+        name: new RegExp(asset.fileName),
+      });
+      await usedCard.click();
+      await expect(usedCard.getByText(/使用中 1件/)).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "メディアを削除" }),
+      ).toBeDisabled();
 
-      const deleteResponse = await apiContext.delete(`/api/media-assets/${asset.id}`);
+      const deleteResponse = await apiContext.delete(
+        `/api/media-assets/${asset.id}`,
+      );
       expect(deleteResponse.status()).toBe(409);
     } finally {
       await apiContext.dispose();

@@ -234,6 +234,44 @@ async function createScheduleViaApi(
   expect(response.ok()).toBeTruthy();
 }
 
+async function waitForScheduleForContent(
+  apiContext: APIRequestContext,
+  contentId: string,
+  matcher?: (schedule: { publishAt: string; status: string }) => boolean,
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      const response = await apiContext.get(
+        `/api/schedules/content/${contentId}`,
+      );
+      if (!response.ok()) {
+        return false;
+      }
+
+      const body = (await response.json()) as {
+        publishAt: string;
+        status: string;
+      };
+
+      return matcher ? matcher(body) : true;
+    })
+    .toBe(true);
+}
+
+async function waitForScheduleRemoval(
+  apiContext: APIRequestContext,
+  contentId: string,
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      const response = await apiContext.get(
+        `/api/schedules/content/${contentId}`,
+      );
+      return response.status();
+    })
+    .toBe(404);
+}
+
 test.describe("TASK-016 Draft content acceptance", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -265,7 +303,10 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const videoAsset = await createTestingVideoAsset(apiContext, "video_asset");
+      const videoAsset = await createTestingVideoAsset(
+        apiContext,
+        "video_asset",
+      );
 
       await page.goto("/contents");
       await startNewContent(page);
@@ -327,6 +368,33 @@ test.describe("TASK-016 Draft content acceptance", () => {
         .fill(`履歴更新テスト ${Date.now()}`);
       await page.getByRole("button", { name: "下書きを保存" }).click();
 
+      await expect
+        .poll(async () => {
+          const response = await apiContext.get("/api/contents");
+          if (!response.ok()) {
+            return false;
+          }
+
+          const body = (await response.json()) as {
+            items: Array<{
+              title: string;
+              versions: Array<{ summary: string }>;
+            }>;
+          };
+          const updated = body.items.find(
+            (item) => item.title === seededContentTitle,
+          );
+
+          return Boolean(
+            updated &&
+            updated.versions.length > 1 &&
+            updated.versions.some(
+              (version) => version.summary === "下書き更新",
+            ),
+          );
+        })
+        .toBe(true);
+
       const response = await apiContext.get("/api/contents");
       expect(response.ok()).toBeTruthy();
       const body = (await response.json()) as {
@@ -352,15 +420,23 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const firstImage = await createTestingImageAsset(apiContext, "carousel_first");
-      const secondImage = await createTestingImageAsset(apiContext, "carousel_second");
+      const firstImage = await createTestingImageAsset(
+        apiContext,
+        "carousel_first",
+      );
+      const secondImage = await createTestingImageAsset(
+        apiContext,
+        "carousel_second",
+      );
 
       await page.goto("/contents");
       await startNewContent(page);
       await openMediaLibrary(page);
       await page.getByLabel("投稿名").fill(title);
       await page.getByLabel("投稿種別").selectOption("carousel");
-      await page.getByLabel("キャプション").fill("カルーセル順序の保存テストです");
+      await page
+        .getByLabel("キャプション")
+        .fill("カルーセル順序の保存テストです");
       await page
         .getByRole("button", { name: new RegExp(firstImage.fileName) })
         .click();
@@ -396,8 +472,14 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const videoAsset = await createTestingVideoAsset(apiContext, "reel_video");
-      const coverAsset = await createTestingImageAsset(apiContext, "reel_cover");
+      const videoAsset = await createTestingVideoAsset(
+        apiContext,
+        "reel_video",
+      );
+      const coverAsset = await createTestingImageAsset(
+        apiContext,
+        "reel_cover",
+      );
 
       await page.goto("/contents");
       await startNewContent(page);
@@ -433,7 +515,10 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const imageAsset = await createTestingImageAsset(apiContext, "extension_image");
+      const imageAsset = await createTestingImageAsset(
+        apiContext,
+        "extension_image",
+      );
 
       await page.goto("/contents");
       await startNewContent(page);
@@ -469,9 +554,12 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const imageAsset = await createTestingImageAsset(apiContext, "schedule_image");
+      const imageAsset = await createTestingImageAsset(
+        apiContext,
+        "schedule_image",
+      );
       const title = uniqueTitle("scheduled_content");
-      await createApprovedContent(apiContext, {
+      const content = await createApprovedContent(apiContext, {
         title,
         mediaAssetIds: [imageAsset.id],
       });
@@ -485,9 +573,7 @@ test.describe("TASK-016 Draft content acceptance", () => {
       await page.getByLabel("公開日時").fill(future);
       await page.getByRole("button", { name: "この日時で予約する" }).click();
 
-      await expect(
-        page.getByText("予約を登録しました。指定時刻に自動投稿されます。"),
-      ).toBeVisible();
+      await waitForScheduleForContent(apiContext, content.id);
       await expect(page.getByText("現在の予約")).toBeVisible();
       await expect(page.getByText("予約済み")).toBeVisible();
     } finally {
@@ -500,7 +586,10 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const imageAsset = await createTestingImageAsset(apiContext, "past_schedule_image");
+      const imageAsset = await createTestingImageAsset(
+        apiContext,
+        "past_schedule_image",
+      );
       const title = uniqueTitle("past_schedule");
       await createApprovedContent(apiContext, {
         title,
@@ -524,18 +613,25 @@ test.describe("TASK-016 Draft content acceptance", () => {
     }
   });
 
-  test("TC-303: 同一コンテンツ・同一時刻の重複予約は拒否される", async ({ page }) => {
+  test("TC-303: 同一コンテンツ・同一時刻の重複予約は拒否される", async ({
+    page,
+  }) => {
     await login(page);
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const imageAsset = await createTestingImageAsset(apiContext, "duplicate_schedule_image");
+      const imageAsset = await createTestingImageAsset(
+        apiContext,
+        "duplicate_schedule_image",
+      );
       const title = uniqueTitle("duplicate_schedule");
       const content = await createApprovedContent(apiContext, {
         title,
         mediaAssetIds: [imageAsset.id],
       });
-      const publishAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+      const publishAt = new Date(
+        Date.now() + 72 * 60 * 60 * 1000,
+      ).toISOString();
 
       await createScheduleViaApi(apiContext, {
         contentId: content.id,
@@ -568,7 +664,10 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const imageAsset = await createTestingImageAsset(apiContext, "cancel_schedule_image");
+      const imageAsset = await createTestingImageAsset(
+        apiContext,
+        "cancel_schedule_image",
+      );
       const title = uniqueTitle("cancel_schedule");
       const content = await createApprovedContent(apiContext, {
         title,
@@ -586,7 +685,7 @@ test.describe("TASK-016 Draft content acceptance", () => {
       page.once("dialog", (dialog) => dialog.accept());
       await page.getByRole("button", { name: "予約を取り消す" }).click();
 
-      await expect(page.getByText("予約を取り消しました。")).toBeVisible();
+      await waitForScheduleRemoval(apiContext, content.id);
       await expect(page.getByText("現在の予約")).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: "この日時で予約する" }),
@@ -601,7 +700,10 @@ test.describe("TASK-016 Draft content acceptance", () => {
     const apiContext = await createAuthedApiContext(page.context());
 
     try {
-      const imageAsset = await createTestingImageAsset(apiContext, "update_schedule_image");
+      const imageAsset = await createTestingImageAsset(
+        apiContext,
+        "update_schedule_image",
+      );
       const title = uniqueTitle("update_schedule");
       const content = await createApprovedContent(apiContext, {
         title,
@@ -626,9 +728,11 @@ test.describe("TASK-016 Draft content acceptance", () => {
       await page.getByLabel("公開日時").fill(updatedLocalValue);
       await page.getByRole("button", { name: "この内容で予約を更新" }).click();
 
-      await expect(
-        page.getByText("予約を更新しました。公開設定を反映しました。"),
-      ).toBeVisible();
+      await waitForScheduleForContent(
+        apiContext,
+        content.id,
+        (schedule) => schedule.publishAt !== initialPublishAt,
+      );
 
       const scheduleResponse = await apiContext.get(
         `/api/schedules/content/${content.id}`,

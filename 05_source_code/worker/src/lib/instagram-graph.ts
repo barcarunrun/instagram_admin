@@ -62,11 +62,16 @@ function createFailure(input: {
   };
 }
 
-function mapGraphApiError(statusCode: number, body: GraphApiErrorBody): PublishFailure {
+function mapGraphApiError(
+  statusCode: number,
+  body: GraphApiErrorBody,
+): PublishFailure {
   const error = body.error;
   const code = error?.code;
   const message =
-    error?.error_user_msg ?? error?.message ?? "Instagram Graph API request failed.";
+    error?.error_user_msg ??
+    error?.message ??
+    "Instagram Graph API request failed.";
 
   if (statusCode === 401 || code === 190) {
     return createFailure({
@@ -114,7 +119,9 @@ function mapGraphApiError(statusCode: number, body: GraphApiErrorBody): PublishF
   });
 }
 
-async function parseGraphResponse<T>(response: Response): Promise<T | GraphApiErrorBody> {
+async function parseGraphResponse<T>(
+  response: Response,
+): Promise<T | GraphApiErrorBody> {
   return (await response.json().catch(() => ({}))) as T | GraphApiErrorBody;
 }
 
@@ -168,7 +175,10 @@ async function graphApiGet<T>(
   return { ok: true, body: parsed as T };
 }
 
-function requireMediaUrl(url: string | undefined, field: string): string | PublishFailure {
+function requireMediaUrl(
+  url: string | undefined,
+  field: string,
+): string | PublishFailure {
   if (!isAbsoluteHttpUrl(url)) {
     return createFailure({
       statusCode: 400,
@@ -201,8 +211,13 @@ async function waitForContainerReady(
       return { ok: false, failure: statusResponse.failure };
     }
 
-    const statusCode = statusResponse.body.status_code ?? statusResponse.body.status;
-    if (!statusCode || statusCode === "FINISHED" || statusCode === "PUBLISHED") {
+    const statusCode =
+      statusResponse.body.status_code ?? statusResponse.body.status;
+    if (
+      !statusCode ||
+      statusCode === "FINISHED" ||
+      statusCode === "PUBLISHED"
+    ) {
       return {
         ok: true,
         responsePayload: statusResponse.body as Record<string, unknown>,
@@ -240,7 +255,9 @@ async function createChildContainer(
   accessToken: string,
   mediaUrl: string,
   mediaType: "image" | "video",
-): Promise<{ ok: true; creationId: string } | { ok: false; failure: PublishFailure }> {
+): Promise<
+  { ok: true; creationId: string } | { ok: false; failure: PublishFailure }
+> {
   const postParams: Record<string, string> = {
     is_carousel_item: "true",
   };
@@ -274,7 +291,10 @@ async function createChildContainer(
   }
 
   if (mediaType === "video") {
-    const ready = await waitForContainerReady(accessToken, createResponse.body.id);
+    const ready = await waitForContainerReady(
+      accessToken,
+      createResponse.body.id,
+    );
     if (!ready.ok) {
       return ready;
     }
@@ -286,9 +306,7 @@ async function createChildContainer(
   };
 }
 
-async function createMediaContainer(
-  execution: WorkerExecutionPayload,
-): Promise<
+async function createMediaContainer(execution: WorkerExecutionPayload): Promise<
   | {
       ok: true;
       creationId: string;
@@ -315,7 +333,10 @@ async function createMediaContainer(
     const childIds: string[] = [];
 
     for (const asset of execution.payload.assets) {
-      const childUrl = requireMediaUrl(asset.url, `assets.${asset.mediaAssetId}.url`);
+      const childUrl = requireMediaUrl(
+        asset.url,
+        `assets.${asset.mediaAssetId}.url`,
+      );
       if (typeof childUrl !== "string") {
         return { ok: false, failure: childUrl };
       }
@@ -424,7 +445,10 @@ async function createMediaContainer(
   }
 
   if (mediaType === "VIDEO" || mediaType === "REELS") {
-    const ready = await waitForContainerReady(accessToken, createResponse.body.id);
+    const ready = await waitForContainerReady(
+      accessToken,
+      createResponse.body.id,
+    );
     if (!ready.ok) {
       return ready;
     }
