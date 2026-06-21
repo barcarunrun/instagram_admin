@@ -41,6 +41,17 @@ async function serverFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function serverFetchOrNull<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T | null> {
+  try {
+    return await serverFetch<T>(path, init);
+  } catch {
+    return null;
+  }
+}
+
 function createDashboardQuery(range?: { from?: string; to?: string }): string {
   const params = new URLSearchParams();
 
@@ -63,6 +74,12 @@ export const serverApi = {
 
   getIntegrationStatus(): Promise<InstagramIntegration> {
     return serverFetch<InstagramIntegration>("/integrations/instagram/status");
+  },
+
+  getIntegrationStatusOrNull(): Promise<InstagramIntegration | null> {
+    return serverFetchOrNull<InstagramIntegration>(
+      "/integrations/instagram/status",
+    );
   },
 
   getContents(): Promise<{ items: ContentItem[] }> {

@@ -1,4 +1,9 @@
-import { createCipheriv, createHash, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 
 function getEncryptionKey(): Buffer {
   const secret = process.env.TOKEN_ENCRYPTION_KEY ?? "local-dev-token-key";
@@ -14,4 +19,22 @@ export function encryptToken(value: string): string {
   ]);
 
   return `${iv.toString("hex")}:${encrypted.toString("hex")}`;
+}
+
+export function decryptToken(value: string): string {
+  const [ivHex, encryptedHex] = value.split(":");
+
+  if (!ivHex || !encryptedHex) {
+    throw new Error("Invalid encrypted token format.");
+  }
+
+  const iv = Buffer.from(ivHex, "hex");
+  const encrypted = Buffer.from(encryptedHex, "hex");
+  const decipher = createDecipheriv("aes-256-cbc", getEncryptionKey(), iv);
+  const decrypted = Buffer.concat([
+    decipher.update(encrypted),
+    decipher.final(),
+  ]);
+
+  return decrypted.toString("utf8");
 }

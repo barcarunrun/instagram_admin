@@ -1,8 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { api } from "../lib/api";
+import { resolveMediaAssetUrl } from "../lib/media-url";
 import type {
   ContentItem,
   ContentType,
@@ -144,7 +146,7 @@ export function ContentStudio({
 }: {
   initialContents: ContentItem[];
   mediaAssets: MediaAsset[];
-  accountId: string;
+  accountId: string | null;
 }) {
   const [contents, setContents] = useState(initialContents);
   const [mediaAssets, setMediaAssets] = useState(initialMediaAssets);
@@ -392,6 +394,11 @@ export function ContentStudio({
   }
 
   function onValidateSchedule() {
+    if (!accountId) {
+      setScheduleMessage("予約投稿を利用するには Instagram 連携を完了してください。");
+      return;
+    }
+
     if (!selectedContent || !scheduleAt) {
       setScheduleMessage("公開日時は現在より後の時刻を指定してください。");
       return;
@@ -698,6 +705,24 @@ export function ContentStudio({
                   <div className="meta-list" style={{ marginTop: 10 }}>
                     {selectedAssets.map((asset) => (
                       <div key={asset.id} className="meta-item">
+                        <div className="media-preview" style={{ marginBottom: 12 }}>
+                          {asset.mediaType === "image" ? (
+                            <Image
+                              src={resolveMediaAssetUrl(asset.url)}
+                              alt={asset.fileName}
+                              width={asset.width}
+                              height={asset.height}
+                              unoptimized
+                            />
+                          ) : (
+                            <video
+                              src={resolveMediaAssetUrl(asset.url)}
+                              controls
+                              muted
+                              preload="metadata"
+                            />
+                          )}
+                        </div>
                         <div className="asset-card-head">
                           <div>
                             <div className="asset-title">{asset.fileName}</div>
@@ -984,8 +1009,13 @@ export function ContentStudio({
                 type="datetime-local"
                 value={scheduleAt}
                 onChange={(event) => setScheduleAt(event.target.value)}
+                disabled={!accountId}
               />
-              <div className="field-hint">未来の日時のみ指定できます。</div>
+              <div className="field-hint">
+                {accountId
+                  ? "未来の日時のみ指定できます。"
+                  : "Instagram 連携後に予約投稿を利用できます。"}
+              </div>
             </div>
           </section>
 
@@ -996,7 +1026,7 @@ export function ContentStudio({
               <button
                 className="button"
                 onClick={onValidateSchedule}
-                disabled={isPending}
+                disabled={isPending || !accountId}
               >
                 {isPending
                   ? "確認中..."

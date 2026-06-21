@@ -9,7 +9,7 @@ export default async function ConnectPage(props: {
     oauthMessage?: string;
   }>;
 }) {
-  const integration = await serverApi.getIntegrationStatus().catch(() => null);
+  const integration = await serverApi.getIntegrationStatusOrNull();
   const searchParams = await props.searchParams;
 
   return (
