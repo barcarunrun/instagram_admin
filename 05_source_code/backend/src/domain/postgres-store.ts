@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { createId } from "../lib/id.js";
 import { pool } from "../lib/db.js";
+import { decryptToken } from "../lib/token-crypto.js";
 import { normalizeContentPayload } from "./content-normalization.js";
 import { validateContentDraft } from "./content-rules.js";
 import type {
@@ -473,6 +474,52 @@ function getMockScenarioFromLabels(labels: string[]): string | undefined {
 function calculateNextRetryAt(retryCount: number): Date {
   const delaySeconds = RETRY_BASE_SECONDS * 2 ** Math.max(retryCount - 1, 0);
   return new Date(Date.now() + delaySeconds * 1000);
+}
+
+function getMediaPublicBaseUrl(): string | undefined {
+  const configured =
+    process.env.MEDIA_PUBLIC_BASE_URL ?? process.env.PUBLIC_API_BASE_URL;
+  return configured?.trim() ? configured.trim() : undefined;
+}
+
+function toPublicMediaUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) {
+    return url;
+  }
+
+  const baseUrl = getMediaPublicBaseUrl();
+  if (!baseUrl) {
+    return url;
+  }
+
+  return new URL(url, baseUrl).toString();
+}
+
+function toPublicGraphApiPayload<T extends {
+  graphApi: {
+    mediaUrl?: string;
+    children?: string[];
+    coverUrl?: string;
+  };
+  assets: Array<{ url: string }>;
+}>(payload: T): T {
+  return {
+    ...payload,
+    graphApi: {
+      ...payload.graphApi,
+      mediaUrl: payload.graphApi.mediaUrl
+        ? toPublicMediaUrl(payload.graphApi.mediaUrl)
+        : undefined,
+      children: payload.graphApi.children?.map((url) => toPublicMediaUrl(url)),
+      coverUrl: payload.graphApi.coverUrl
+        ? toPublicMediaUrl(payload.graphApi.coverUrl)
+        : undefined,
+    },
+    assets: payload.assets.map((asset) => ({
+      ...asset,
+      url: toPublicMediaUrl(asset.url),
+    })),
+  };
 }
 
 function classifyJobFailure(input: {
@@ -1728,7 +1775,11 @@ export const store = {
       id: string;
       schedule_id: string;
       content_id: string;
+      facebook_page_id: string;
       account_id: string;
+      access_token_encrypted: string;
+      token_expires_at: string | Date | null;
+      permissions: string[] | null;
       publish_at: string | Date;
       retry_count: number;
       job_status: JobStatus;
@@ -1736,6 +1787,10 @@ export const store = {
       `
         select pj.id, pj.schedule_id, s.content_id,
           ia.instagram_account_id as account_id,
+          ia.facebook_page_id,
+          ia.access_token_encrypted,
+          ia.token_expires_at,
+          ia.permissions,
           s.publish_at, pj.retry_count, pj.job_status
         from posting_jobs pj
         join schedules s on s.id = pj.schedule_id
@@ -1763,10 +1818,17 @@ export const store = {
       scheduleId: job.schedule_id,
       contentId: job.content_id,
       accountId: job.account_id,
+      integration: {
+        accountId: job.account_id,
+        facebookPageId: job.facebook_page_id,
+        accessToken: decryptToken(job.access_token_encrypted),
+        tokenExpiresAt: toIso(job.token_expires_at),
+        permissions: toStringArray(job.permissions),
+      },
       publishAt: toIso(job.publish_at),
       retryCount: job.retry_count,
       mockScenario: getMockScenarioFromLabels(content.labels),
-      payload,
+      payload: toPublicGraphApiPayload(payload),
     };
   },
 

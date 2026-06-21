@@ -6,7 +6,7 @@ export default async function ContentsPage() {
   const [contents, mediaAssets, integration] = await Promise.all([
     serverApi.getContents(),
     serverApi.getMediaAssets({ excludeDemo: true }),
-    serverApi.getIntegrationStatus(),
+    serverApi.getIntegrationStatusOrNull(),
   ]);
 
   return (
@@ -14,7 +14,7 @@ export default async function ContentsPage() {
       <ContentStudio
         initialContents={contents.items}
         mediaAssets={mediaAssets.items}
-        accountId={integration.accountId}
+        accountId={integration?.accountId ?? null}
       />
     </AppShell>
   );

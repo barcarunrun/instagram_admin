@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useRef, useState } from "react";
 import { api } from "../lib/api";
+import { resolveMediaAssetUrl } from "../lib/media-url";
 import type { MediaAsset } from "../lib/types";
 import { Hero } from "./hero";
 import { TrashIcon, UploadIcon } from "./icons";
@@ -291,14 +292,19 @@ export function MediaManagement({
               <div className="media-preview">
                 {selectedAsset.mediaType === "image" ? (
                   <Image
-                    src={selectedAsset.url}
+                    src={resolveMediaAssetUrl(selectedAsset.url)}
                     alt={selectedAsset.fileName}
                     width={selectedAsset.width}
                     height={selectedAsset.height}
                     unoptimized
                   />
                 ) : (
-                  <video src={selectedAsset.url} controls muted preload="metadata" />
+                  <video
+                    src={resolveMediaAssetUrl(selectedAsset.url)}
+                    controls
+                    muted
+                    preload="metadata"
+                  />
                 )}
               </div>
 

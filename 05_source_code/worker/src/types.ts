@@ -13,16 +13,23 @@ export type WorkerExecutionPayload = {
   scheduleId: string;
   contentId: string;
   accountId: string;
+  integration: {
+    accountId: string;
+    facebookPageId: string;
+    accessToken: string;
+    tokenExpiresAt: string;
+    permissions: string[];
+  };
   publishAt: string;
   retryCount: number;
   mockScenario?: string;
   payload: {
-    contentType: string;
+    contentType: "image" | "video" | "carousel" | "reel" | "extension";
     caption: string;
     hashtags: string[];
     orderedMediaAssetIds: string[];
     graphApi: {
-      mediaType: string;
+      mediaType: "IMAGE" | "VIDEO" | "CAROUSEL" | "REELS" | "EXTENSION";
       caption: string;
       mediaUrl?: string;
       children?: string[];
@@ -32,7 +39,7 @@ export type WorkerExecutionPayload = {
     };
     assets: Array<{
       mediaAssetId: string;
-      mediaType: string;
+      mediaType: "image" | "video";
       mimeType: string;
       url: string;
       order: number;

@@ -5,6 +5,10 @@ import {
   releaseAccountLease,
   requeuePostingJob,
 } from "./lib/redis.js";
+import {
+  publishToInstagramGraphApi,
+  recheckPublishedMedia,
+} from "./lib/instagram-graph.js";
 import type {
   WorkerConfig,
   WorkerExecutionPayload,
@@ -92,12 +96,7 @@ async function publishViaApi(
     }
 > {
   if ((process.env.INSTAGRAM_API_MODE ?? "mock") !== "mock") {
-    return {
-      ok: false,
-      statusCode: 501,
-      code: "NOT_IMPLEMENTED",
-      message: "mock 以外の Instagram API 実装は未対応です。",
-    };
+    return publishToInstagramGraphApi(execution);
   }
 
   const publishResponse = await fetch(
@@ -137,6 +136,7 @@ async function publishViaApi(
 
 async function recheckUnknownResult(
   config: WorkerConfig,
+  execution: WorkerExecutionPayload,
   publishId: string,
 ): Promise<{
   ok: true;
@@ -144,6 +144,10 @@ async function recheckUnknownResult(
   publishedAt: string;
   responsePayload: Record<string, unknown>;
 } | null> {
+  if ((process.env.INSTAGRAM_API_MODE ?? "mock") !== "mock") {
+    return recheckPublishedMedia(execution, publishId);
+  }
+
   const response = await fetch(
     `${config.apiBaseUrl}/local/instagram/publish-status/${publishId}`,
   );
@@ -213,6 +217,7 @@ async function processJob(config: WorkerConfig, job: WorkerJob): Promise<void> {
     if (publishResult.code === "UNKNOWN_RESULT" && publishResult.publishId) {
       const rechecked = await recheckUnknownResult(
         config,
+        execution,
         publishResult.publishId,
       );
 

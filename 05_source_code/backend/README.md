@@ -36,6 +36,7 @@ ACCESS_TOKEN_EXPIRES_IN=3600
 INSTAGRAM_API_MODE=mock
 OAUTH_MODE=mock
 NOTIFICATION_MODE=log
+PUBLIC_API_BASE_URL=
 MOCK_OAUTH_CALLBACK_URL=http://localhost:4000/api/local/oauth/callback
 MOCK_OAUTH_EXPECTED_STATE=mock_state_demo
 ```
@@ -67,6 +68,7 @@ npm run typecheck
 - `GET /auth/me`: 現在ユーザー取得
 - `POST /auth/logout`: ログアウト監査イベント記録
 - `GET /integrations/instagram/status`: Instagram連携状態の取得
+- `POST /integrations/instagram/bootstrap-existing-token`: 既存 `IG_ACCESS_TOKEN` / `IG_USER_ID` から接続候補を生成
 - `GET /media-assets`: メディアアセット一覧の取得
 - `GET /contents`: コンテンツ一覧の取得
 - `POST /contents`: コンテンツ作成
@@ -106,6 +108,16 @@ npm run typecheck
 - 初期 migration と seed は `05_source_code` 配下で `./scripts/local-db.sh bootstrap` を実行して投入します。
 - 入力バリデーションは Zod で実施します。
 - エラー応答は `error.code`、`error.message`、`error.details`、`error.requestId` を含む JSON 形式です。
+- real 投稿では `PUBLIC_API_BASE_URL` に Instagram Graph API から到達可能な `https` 公開 URL を設定する必要があります。
+
+## Real Instagram 投稿
+
+1. `.env` で `INSTAGRAM_API_MODE=real` を設定する
+2. `IG_ACCESS_TOKEN` と `IG_USER_ID` を設定する
+3. `PUBLIC_API_BASE_URL` に backend の公開 URL を設定する
+4. `POST /api/integrations/instagram/bootstrap-existing-token` を呼び出す
+5. 返ってきた `oauthSessionId` と対象 `accountId` で `POST /api/integrations/instagram/connect` を呼び、active な integration を保存する
+6. メディアが `https` で取得できることを確認したうえで、予約投稿を実行する
 
 ## ディレクトリ構成
 
