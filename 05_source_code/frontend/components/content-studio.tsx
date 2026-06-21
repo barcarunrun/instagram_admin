@@ -31,22 +31,26 @@ const contentTypeHelp: Record<
     chips: ["1画像", "画像のみ"],
   },
   video: {
-    description: "単一動画のフィード投稿です。3 秒から 60 秒の動画を選択してください。",
+    description:
+      "単一動画のフィード投稿です。3 秒から 60 秒の動画を選択してください。",
     mediaHint: "動画フィードで利用可能な形式: .mp4 / .mov",
     chips: ["1動画", "3-60秒"],
   },
   carousel: {
-    description: "2 件以上のメディアを並び順つきで公開します。順序を調整できます。",
+    description:
+      "2 件以上のメディアを並び順つきで公開します。順序を調整できます。",
     mediaHint: "カルーセルは 2 から 10 件の画像・動画を選択できます。",
     chips: ["2-10件", "順序管理"],
   },
   reel: {
     description: "単一動画に加え、カバー画像の指定が必要です。",
-    mediaHint: "リールで利用可能な形式: .mp4 / .mov、カバー画像は画像から選択します。",
+    mediaHint:
+      "リールで利用可能な形式: .mp4 / .mov、カバー画像は画像から選択します。",
     chips: ["1動画", "カバー必須", "3-90秒"],
   },
   extension: {
-    description: "将来拡張用の種別です。テンプレートキーと任意設定を保持できます。",
+    description:
+      "将来拡張用の種別です。テンプレートキーと任意設定を保持できます。",
     mediaHint: "拡張種別は設定駆動でメディア構成を切り替えます。",
     chips: ["拡張", "設定駆動"],
   },
@@ -157,8 +161,9 @@ export function ContentStudio({
   const [scheduleValidation, setScheduleValidation] =
     useState<ScheduleValidationResult | null>(null);
   const [scheduleItem, setScheduleItem] = useState<ScheduleItem | null>(null);
-  const [previewValidation, setPreviewValidation] =
-    useState<ContentItem["validation"] | null>(null);
+  const [previewValidation, setPreviewValidation] = useState<
+    ContentItem["validation"] | null
+  >(null);
   const [isPending, startTransition] = useTransition();
   const [scheduleAt, setScheduleAt] = useState("");
   const [filters, setFilters] = useState<ContentsFilters>({
@@ -177,7 +182,9 @@ export function ContentStudio({
   const selectedAssets = form.mediaAssetIds
     .map((assetId) => mediaAssets.find((asset) => asset.id === assetId) ?? null)
     .filter((asset): asset is MediaAsset => Boolean(asset));
-  const imageAssets = mediaAssets.filter((asset) => asset.mediaType === "image");
+  const imageAssets = mediaAssets.filter(
+    (asset) => asset.mediaType === "image",
+  );
   const currentTypeHelp = contentTypeHelp[form.contentType];
   const filteredContents = contents.filter((item) => {
     const matchesQuery = !filters.query || item.title.includes(filters.query);
@@ -262,7 +269,9 @@ export function ContentStudio({
       contentConfig: {
         ...current.contentConfig,
         orderedMediaAssetIds: current.mediaAssetIds.includes(id)
-          ? current.contentConfig.orderedMediaAssetIds.filter((item) => item !== id)
+          ? current.contentConfig.orderedMediaAssetIds.filter(
+              (item) => item !== id,
+            )
           : [...current.contentConfig.orderedMediaAssetIds, id],
       },
     }));
@@ -395,7 +404,9 @@ export function ContentStudio({
 
   function onValidateSchedule() {
     if (!accountId) {
-      setScheduleMessage("予約投稿を利用するには Instagram 連携を完了してください。");
+      setScheduleMessage(
+        "予約投稿を利用するには Instagram 連携を完了してください。",
+      );
       return;
     }
 
@@ -625,9 +636,7 @@ export function ContentStudio({
                   <option value="reel">リール</option>
                   <option value="extension">拡張</option>
                 </select>
-                <div className="field-hint">
-                  {currentTypeHelp.description}
-                </div>
+                <div className="field-hint">{currentTypeHelp.description}</div>
                 <div className="pill-row" style={{ marginTop: 10 }}>
                   {currentTypeHelp.chips.map((chip) => (
                     <span key={chip} className="tag-chip">
@@ -699,13 +708,18 @@ export function ContentStudio({
                   <div className="panel-head">
                     <div>
                       <h3>選択中のメディア</h3>
-                      <p className="muted">現在この投稿に紐づいているメディアです。</p>
+                      <p className="muted">
+                        現在この投稿に紐づいているメディアです。
+                      </p>
                     </div>
                   </div>
                   <div className="meta-list" style={{ marginTop: 10 }}>
                     {selectedAssets.map((asset) => (
                       <div key={asset.id} className="meta-item">
-                        <div className="media-preview" style={{ marginBottom: 12 }}>
+                        <div
+                          className="media-preview"
+                          style={{ marginBottom: 12 }}
+                        >
                           {asset.mediaType === "image" ? (
                             <Image
                               src={resolveMediaAssetUrl(asset.url)}
@@ -727,7 +741,8 @@ export function ContentStudio({
                           <div>
                             <div className="asset-title">{asset.fileName}</div>
                             <div className="asset-meta">
-                              {asset.mediaType === "video" ? "動画" : "画像"} / {asset.mimeType}
+                              {asset.mediaType === "video" ? "動画" : "画像"} /{" "}
+                              {asset.mimeType}
                             </div>
                           </div>
                           <button
@@ -750,7 +765,9 @@ export function ContentStudio({
                   className="ghost-button"
                   onClick={() => setIsAssetLibraryOpen((current) => !current)}
                 >
-                  {isAssetLibraryOpen ? "既存メディアを隠す" : "既存メディアを表示"}
+                  {isAssetLibraryOpen
+                    ? "既存メディアを隠す"
+                    : "既存メディアを表示"}
                 </button>
                 <Link href="/media" className="ghost-button">
                   メディア管理へ
@@ -777,14 +794,18 @@ export function ContentStudio({
                         >
                           <div className="asset-card-head">
                             <div>
-                              <div className="asset-title">{asset.fileName}</div>
+                              <div className="asset-title">
+                                {asset.fileName}
+                              </div>
                               <div className="asset-meta">
-                                {asset.mediaType === "video" ? "動画" : "画像"} /{" "}
-                                {asset.mimeType}
+                                {asset.mediaType === "video" ? "動画" : "画像"}{" "}
+                                / {asset.mimeType}
                               </div>
                             </div>
                             {selected ? (
-                              <span className="status-pill published">選択中</span>
+                              <span className="status-pill published">
+                                選択中
+                              </span>
                             ) : (
                               <span className="chip">追加</span>
                             )}
@@ -852,12 +873,15 @@ export function ContentStudio({
                   <div className="panel-head">
                     <div>
                       <h3>リール設定</h3>
-                      <p className="muted">カバー画像を 1 件選択してください。</p>
+                      <p className="muted">
+                        カバー画像を 1 件選択してください。
+                      </p>
                     </div>
                   </div>
                   <div className="asset-grid" style={{ marginTop: 10 }}>
                     {imageAssets.map((asset) => {
-                      const selected = form.contentConfig.coverAssetId === asset.id;
+                      const selected =
+                        form.contentConfig.coverAssetId === asset.id;
                       return (
                         <button
                           key={asset.id}
@@ -875,11 +899,17 @@ export function ContentStudio({
                         >
                           <div className="asset-card-head">
                             <div>
-                              <div className="asset-title">{asset.fileName}</div>
-                              <div className="asset-meta">カバー候補 / {asset.mimeType}</div>
+                              <div className="asset-title">
+                                {asset.fileName}
+                              </div>
+                              <div className="asset-meta">
+                                カバー候補 / {asset.mimeType}
+                              </div>
                             </div>
                             {selected ? (
-                              <span className="status-pill published">選択中</span>
+                              <span className="status-pill published">
+                                選択中
+                              </span>
                             ) : (
                               <span className="chip">選択</span>
                             )}
@@ -990,7 +1020,8 @@ export function ContentStudio({
                   <div>
                     <h3>現在の予約</h3>
                     <p className="muted">
-                      {new Date(scheduleItem.publishAt).toLocaleString("ja-JP")} / {scheduleItem.timezone}
+                      {new Date(scheduleItem.publishAt).toLocaleString("ja-JP")}{" "}
+                      / {scheduleItem.timezone}
                     </p>
                   </div>
                   <span className={`status-pill ${scheduleItem.status}`}>

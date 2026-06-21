@@ -156,9 +156,7 @@ async function getJobIdForContent(
   return job.id;
 }
 
-async function createOperationsFixtures(
-  page: Page,
-): Promise<{
+async function createOperationsFixtures(page: Page): Promise<{
   failedTitle: string;
   scheduledTitle: string;
   from: string;
@@ -189,8 +187,12 @@ async function createOperationsFixtures(
     });
 
     const publishDate = new Date(Date.now() + 2 * 60 * 60 * 1000);
-    const from = formatDateOnly(new Date(publishDate.getTime() - 24 * 60 * 60 * 1000));
-    const to = formatDateOnly(new Date(publishDate.getTime() + 24 * 60 * 60 * 1000));
+    const from = formatDateOnly(
+      new Date(publishDate.getTime() - 24 * 60 * 60 * 1000),
+    );
+    const to = formatDateOnly(
+      new Date(publishDate.getTime() + 24 * 60 * 60 * 1000),
+    );
     const publishAt = publishDate.toISOString();
 
     await createSchedule(apiContext, {

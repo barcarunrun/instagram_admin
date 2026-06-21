@@ -64,7 +64,9 @@ export function MediaManagement({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedAsset =
-    mediaAssets.find((asset) => asset.id === selectedId) ?? mediaAssets[0] ?? null;
+    mediaAssets.find((asset) => asset.id === selectedId) ??
+    mediaAssets[0] ??
+    null;
 
   async function refresh(nextFilters: MediaFilters = filters): Promise<void> {
     setIsRefreshing(true);
@@ -137,9 +139,7 @@ export function MediaManagement({
       await refresh();
     } catch (error) {
       setMessage(
-        error instanceof Error
-          ? error.message
-          : "メディア削除に失敗しました。",
+        error instanceof Error ? error.message : "メディア削除に失敗しました。",
       );
     } finally {
       setIsDeleting(false);
@@ -189,10 +189,14 @@ export function MediaManagement({
         <div className="media-toolbar">
           <div>
             <h3>ライブラリ</h3>
-            <p className="muted">既存メディアを検索し、再利用状況を確認できます。</p>
+            <p className="muted">
+              既存メディアを検索し、再利用状況を確認できます。
+            </p>
           </div>
           <div className="button-row">
-            <span className={`media-summary-chip ${isRefreshing ? "used" : "unused"}`}>
+            <span
+              className={`media-summary-chip ${isRefreshing ? "used" : "unused"}`}
+            >
               {isRefreshing ? "更新中" : `${mediaAssets.length}件`}
             </span>
           </div>
@@ -218,12 +222,18 @@ export function MediaManagement({
             <option value="image">画像</option>
             <option value="video">動画</option>
           </select>
-          <label className="surface-inset" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <label
+            className="surface-inset"
+            style={{ display: "flex", alignItems: "center", gap: 10 }}
+          >
             <input
               type="checkbox"
               checked={filters.usedOnly}
               onChange={(event) =>
-                void applyFilters({ ...filters, usedOnly: event.target.checked })
+                void applyFilters({
+                  ...filters,
+                  usedOnly: event.target.checked,
+                })
               }
             />
             使用中のみ表示
@@ -240,7 +250,9 @@ export function MediaManagement({
               <div className="surface-inset media-empty">
                 <div>
                   <p className="muted">条件に一致するメディアがありません。</p>
-                  <p className="field-hint">上部のアップロードから新規追加できます。</p>
+                  <p className="field-hint">
+                    上部のアップロードから新規追加できます。
+                  </p>
                 </div>
               </div>
             ) : (
@@ -258,18 +270,23 @@ export function MediaManagement({
                       <div>
                         <div className="asset-title">{asset.fileName}</div>
                         <div className="asset-meta">
-                          {asset.mediaType === "video" ? "動画" : "画像"} / {asset.mimeType}
+                          {asset.mediaType === "video" ? "動画" : "画像"} /{" "}
+                          {asset.mimeType}
                         </div>
                       </div>
                       <span
                         className={`media-summary-chip ${asset.isUsed ? "used" : "unused"}`}
                       >
-                        {asset.isUsed ? `使用中 ${asset.usageCount ?? 0}件` : "未使用"}
+                        {asset.isUsed
+                          ? `使用中 ${asset.usageCount ?? 0}件`
+                          : "未使用"}
                       </span>
                     </div>
                     <div className="field-hint" style={{ marginTop: 10 }}>
                       {asset.width} x {asset.height}
-                      {asset.durationSeconds ? ` / ${asset.durationSeconds}秒` : ""}
+                      {asset.durationSeconds
+                        ? ` / ${asset.durationSeconds}秒`
+                        : ""}
                       {` / ${formatFileSize(asset.fileSize)}`}
                     </div>
                   </button>
@@ -283,7 +300,9 @@ export function MediaManagement({
           <div className="panel-head">
             <div>
               <h3>詳細</h3>
-              <p className="muted">選択中メディアの情報と削除可否を確認できます。</p>
+              <p className="muted">
+                選択中メディアの情報と削除可否を確認できます。
+              </p>
             </div>
           </div>
 

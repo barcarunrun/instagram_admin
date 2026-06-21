@@ -26,7 +26,8 @@ import { extractMediaMetadata } from "../lib/media-metadata.js";
 import {
   deleteStoredMediaFile,
   getStoredMediaPath,
-  writeMediaToLocalStorage,
+  isStoredRemotely,
+  writeMediaToStorage,
 } from "../lib/media-storage.js";
 import {
   consumeInstagramOAuthSession,
@@ -34,6 +35,7 @@ import {
   createInstagramExistingTokenSession,
   finalizeInstagramOAuthCallback,
   getInstagramOAuthSession,
+  InstagramOAuthError,
 } from "../lib/instagram-oauth.js";
 import {
   completeMockOAuthCallback,
@@ -703,13 +705,14 @@ router.post(
       return response.status(200).json(existing);
     }
 
-    const storedPath = await writeMediaToLocalStorage({
+    const storedMedia = await writeMediaToStorage({
       storageKey,
       buffer: file.buffer,
+      contentType: mimeType,
     });
     const metadata = await extractMediaMetadata({
       buffer: file.buffer,
-      filePath: storedPath,
+      filePath: storedMedia.filePath,
       mimeType,
     });
     const asset = await store.createMediaAsset({
@@ -723,7 +726,8 @@ router.post(
       durationSeconds: metadata.durationSeconds,
       url: "/api/media-assets/pending/file",
     });
-    const finalizedUrl = `/api/media-assets/${asset.id}/file`;
+    const finalizedUrl =
+      storedMedia.publicUrl ?? `/api/media-assets/${asset.id}/file`;
     const updated = await store.updateMediaAssetUrl(asset.id, finalizedUrl);
 
     await recordAuditLog({
@@ -763,6 +767,10 @@ router.get(
         "RESOURCE_NOT_FOUND",
         "保存済みメディアが見つかりません。",
       );
+    }
+
+    if (isStoredRemotely(asset.url)) {
+      return response.redirect(asset.url);
     }
 
     response.type(asset.mimeType);
@@ -926,11 +934,19 @@ router.get(
 router.post(
   "/integrations/instagram/bootstrap-existing-token",
   asyncHandler(async (request, response) => {
-    const session = await createInstagramExistingTokenSession({
-      actorKey: request.authUser?.id ?? "user_demo",
-    });
+    try {
+      const session = await createInstagramExistingTokenSession({
+        actorKey: request.authUser?.id ?? "user_demo",
+      });
 
-    response.status(201).json(session);
+      response.status(201).json(session);
+    } catch (error) {
+      if (error instanceof InstagramOAuthError) {
+        return sendError(response, error.status, error.code, error.message);
+      }
+
+      throw error;
+    }
   }),
 );
 
@@ -1025,7 +1041,8 @@ router.get(
           ? request.query.keyword
           : undefined,
       mediaType:
-        request.query.mediaType === "image" || request.query.mediaType === "video"
+        request.query.mediaType === "image" ||
+        request.query.mediaType === "video"
           ? request.query.mediaType
           : undefined,
       usedOnly: request.query.usedOnly === "true",

@@ -35,6 +35,41 @@ type CallbackSuccess = {
   accounts: InstagramAccountCandidate[];
 };
 
+type GraphApiErrorBody = {
+  error?: {
+    message?: string;
+    code?: number;
+    error_subcode?: number;
+    error_user_msg?: string;
+    is_transient?: boolean;
+  };
+};
+
+type InstagramProfileBody = {
+  id?: string;
+  username?: string;
+  name?: string;
+};
+
+type FacebookPageAccount = {
+  id?: string;
+  name?: string;
+  instagram_business_account?: { id?: string; username?: string };
+  connected_instagram_account?: { id?: string; username?: string };
+};
+
+export class InstagramOAuthError extends Error {
+  status: number;
+  code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "InstagramOAuthError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 const SESSION_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_SCOPES =
   "pages_show_list,instagram_basic,instagram_content_publish";
@@ -90,6 +125,41 @@ function toIntegrationStatus(permissions: string[]): IntegrationStatus {
     permissions.includes("pages_show_list")
     ? "active"
     : "reauthorization_required";
+}
+
+function createGraphApiError(
+  status: number,
+  body: GraphApiErrorBody | undefined,
+  fallbackMessage: string,
+): InstagramOAuthError {
+  const code = body?.error?.code;
+  const message =
+    body?.error?.error_user_msg ?? body?.error?.message ?? fallbackMessage;
+
+  if (status === 401 || code === 190) {
+    return new InstagramOAuthError(401, "AUTH_EXPIRED", message);
+  }
+
+  if (
+    status === 429 ||
+    body?.error?.is_transient ||
+    code === 4 ||
+    code === 17 ||
+    code === 32 ||
+    code === 613
+  ) {
+    return new InstagramOAuthError(429, "RATE_LIMIT", message);
+  }
+
+  if (status === 403 || code === 10 || code === 200) {
+    return new InstagramOAuthError(403, "PERMISSION_DENIED", message);
+  }
+
+  return new InstagramOAuthError(
+    status >= 500 ? 502 : 400,
+    status >= 500 ? "INTERNAL_SERVER_ERROR" : "VALIDATION_ERROR",
+    message,
+  );
 }
 
 function getSessionByState(state?: string): PendingOAuthSession | undefined {
@@ -153,11 +223,16 @@ async function fetchGrantedPermissions(accessToken: string): Promise<string[]> {
 
   const response = await fetch(permissionsUrl, { method: "GET" });
   const body = (await response.json().catch(() => undefined)) as
-    | { data?: Array<{ permission?: string; status?: string }> }
+    | ({ data?: Array<{ permission?: string; status?: string }> } &
+        GraphApiErrorBody)
     | undefined;
 
   if (!response.ok) {
-    throw new Error("Failed to fetch Facebook permissions.");
+    throw createGraphApiError(
+      response.status,
+      body,
+      "Failed to fetch Facebook permissions.",
+    );
   }
 
   const granted = (body?.data ?? [])
@@ -180,24 +255,32 @@ async function fetchInstagramProfile(
 
   const response = await fetch(profileUrl, { method: "GET" });
   const body = (await response.json().catch(() => undefined)) as
-    | {
-        id?: string;
-        username?: string;
-        name?: string;
-        error?: { message?: string };
-      }
+    | InstagramProfileBody
+    | GraphApiErrorBody
     | undefined;
 
-  if (!response.ok || !body?.id) {
-    throw new Error(
-      body?.error?.message ?? "Failed to fetch Instagram account profile.",
+  if (!response.ok) {
+    throw createGraphApiError(
+      response.status,
+      body as GraphApiErrorBody | undefined,
+      "Failed to fetch Instagram account profile.",
+    );
+  }
+
+  const profile = body as InstagramProfileBody | undefined;
+
+  if (!profile?.id) {
+    throw new InstagramOAuthError(
+      502,
+      "UNKNOWN_RESULT",
+      "Failed to fetch Instagram account profile.",
     );
   }
 
   return {
-    id: String(body.id),
-    username: body.username,
-    name: body.name,
+    id: String(profile.id),
+    username: profile.username,
+    name: profile.name,
   };
 }
 
@@ -218,21 +301,22 @@ async function fetchInstagramAccounts(
 
   const response = await fetch(accountsUrl, { method: "GET" });
   const body = (await response.json().catch(() => undefined)) as
-    | {
-        data?: Array<{
-          id?: string;
-          name?: string;
-          instagram_business_account?: { id?: string; username?: string };
-          connected_instagram_account?: { id?: string; username?: string };
-        }>;
-      }
+    | { data?: FacebookPageAccount[] }
+    | GraphApiErrorBody
     | undefined;
 
   if (!response.ok) {
-    throw new Error("Failed to fetch Instagram business accounts.");
+    throw createGraphApiError(
+      response.status,
+      body as GraphApiErrorBody | undefined,
+      "Failed to fetch Instagram business accounts.",
+    );
   }
 
-  const accounts = (body?.data ?? [])
+  const pageAccounts = ((body as { data?: FacebookPageAccount[] } | undefined)
+    ?.data ?? []) as FacebookPageAccount[];
+
+  const accounts = pageAccounts
     .map((item) => {
       const instagramAccount =
         item.instagram_business_account ?? item.connected_instagram_account;
@@ -264,7 +348,7 @@ async function fetchInstagramAccounts(
     return matchedAccounts;
   }
 
-  const fallbackPage = (body?.data ?? []).find((item) => item.id);
+  const fallbackPage = pageAccounts.find((item) => item.id);
 
   if (!fallbackPage) {
     return [];

@@ -203,14 +203,23 @@ async function processJob(config: WorkerConfig, job: WorkerJob): Promise<void> {
     const publishResult = await publishViaApi(config, execution);
 
     if (publishResult.ok) {
-      await internalFetch(config, `/internal/jobs/${job.jobId}/complete`, {
+      const completeResponse = await internalFetch(
+        config,
+        `/internal/jobs/${job.jobId}/complete`,
+        {
         method: "POST",
         body: JSON.stringify({
           externalPublishId: publishResult.publishId,
           publishedAt: publishResult.publishedAt,
           responsePayload: publishResult.responsePayload,
         }),
-      });
+        },
+      );
+
+      if (!completeResponse.ok) {
+        throw new Error(`Failed to complete job ${job.jobId}`);
+      }
+
       return;
     }
 
@@ -222,14 +231,23 @@ async function processJob(config: WorkerConfig, job: WorkerJob): Promise<void> {
       );
 
       if (rechecked) {
-        await internalFetch(config, `/internal/jobs/${job.jobId}/complete`, {
+        const completeResponse = await internalFetch(
+          config,
+          `/internal/jobs/${job.jobId}/complete`,
+          {
           method: "POST",
           body: JSON.stringify({
             externalPublishId: rechecked.publishId,
             publishedAt: rechecked.publishedAt,
             responsePayload: rechecked.responsePayload,
           }),
-        });
+          },
+        );
+
+        if (!completeResponse.ok) {
+          throw new Error(`Failed to complete job ${job.jobId}`);
+        }
+
         return;
       }
     }

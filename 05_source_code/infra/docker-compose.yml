@@ -49,6 +49,14 @@ services:
       INSTAGRAM_API_MODE: ${INSTAGRAM_API_MODE:-mock}
       OAUTH_MODE: ${OAUTH_MODE:-mock}
       NOTIFICATION_MODE: ${NOTIFICATION_MODE:-log}
+      IG_ACCESS_TOKEN: ${IG_ACCESS_TOKEN:-}
+      IG_USER_ID: ${IG_USER_ID:-}
+      IG_PAGE_ID: ${IG_PAGE_ID:-}
+      IG_ACCOUNT_NAME: ${IG_ACCOUNT_NAME:-}
+      IG_PAGE_NAME: ${IG_PAGE_NAME:-}
+      MEDIA_STORAGE_MODE: ${MEDIA_STORAGE_MODE:-local}
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:-}
+      AZURE_STORAGE_CONTAINER_NAME: ${AZURE_STORAGE_CONTAINER_NAME:-media-assets}
       MOCK_OAUTH_CALLBACK_URL: http://localhost:${BACKEND_PORT:-4000}/api/local/oauth/callback
       MOCK_OAUTH_EXPECTED_STATE: ${MOCK_OAUTH_EXPECTED_STATE:-mock_state_demo}
     ports:
@@ -114,6 +122,7 @@ services:
       REDIS_URL: redis://redis:6379
       INSTAGRAM_API_MODE: ${INSTAGRAM_API_MODE:-mock}
       NOTIFICATION_MODE: ${NOTIFICATION_MODE:-log}
+      IG_USER_ID: ${IG_USER_ID:-}
     volumes:
       - ../worker:/app
       - worker-node-modules:/app/node_modules
