@@ -35,6 +35,7 @@ import {
   createInstagramExistingTokenSession,
   finalizeInstagramOAuthCallback,
   getInstagramOAuthSession,
+  InstagramOAuthError,
 } from "../lib/instagram-oauth.js";
 import {
   completeMockOAuthCallback,
@@ -933,11 +934,19 @@ router.get(
 router.post(
   "/integrations/instagram/bootstrap-existing-token",
   asyncHandler(async (request, response) => {
-    const session = await createInstagramExistingTokenSession({
-      actorKey: request.authUser?.id ?? "user_demo",
-    });
+    try {
+      const session = await createInstagramExistingTokenSession({
+        actorKey: request.authUser?.id ?? "user_demo",
+      });
 
-    response.status(201).json(session);
+      response.status(201).json(session);
+    } catch (error) {
+      if (error instanceof InstagramOAuthError) {
+        return sendError(response, error.status, error.code, error.message);
+      }
+
+      throw error;
+    }
   }),
 );
 

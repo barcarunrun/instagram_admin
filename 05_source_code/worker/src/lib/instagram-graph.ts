@@ -62,6 +62,17 @@ function createFailure(input: {
   };
 }
 
+function normalizeTimestamp(value: string | undefined): string {
+  if (!value) {
+    return new Date().toISOString();
+  }
+
+  const normalized = new Date(value);
+  return Number.isNaN(normalized.getTime())
+    ? new Date().toISOString()
+    : normalized.toISOString();
+}
+
 function mapGraphApiError(
   statusCode: number,
   body: GraphApiErrorBody,
@@ -527,7 +538,7 @@ export async function recheckPublishedMedia(
   return {
     ok: true,
     publishId,
-    publishedAt: response.body.timestamp ?? new Date().toISOString(),
+    publishedAt: normalizeTimestamp(response.body.timestamp),
     responsePayload: response.body as Record<string, unknown>,
   };
 }

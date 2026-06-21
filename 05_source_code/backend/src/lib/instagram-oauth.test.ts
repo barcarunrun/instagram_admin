@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { createInstagramExistingTokenSession } from "./instagram-oauth.js";
+import {
+  createInstagramExistingTokenSession,
+  InstagramOAuthError,
+} from "./instagram-oauth.js";
 
 const originalFetch = global.fetch;
 const envKeys = [
@@ -113,6 +116,41 @@ describe("createInstagramExistingTokenSession", () => {
     assert.match(
       requestedUrls[1]?.searchParams.get("fields") ?? "",
       /connected_instagram_account/,
+    );
+  });
+
+  it("maps expired existing tokens to AUTH_EXPIRED", async () => {
+    global.fetch = (async (input) => {
+      const url = new URL(String(input));
+
+      if (url.pathname === "/v23.0/me/permissions") {
+        return createJsonResponse(
+          {
+            error: {
+              message: "Error validating access token: Session has expired.",
+              code: 190,
+              error_subcode: 463,
+            },
+          },
+          false,
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${url.toString()}`);
+    }) as typeof global.fetch;
+
+    await assert.rejects(
+      () =>
+        createInstagramExistingTokenSession({
+          actorKey: "user_demo",
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof InstagramOAuthError);
+        assert.equal(error.status, 401);
+        assert.equal(error.code, "AUTH_EXPIRED");
+        assert.match(error.message, /Session has expired/);
+        return true;
+      },
     );
   });
 });

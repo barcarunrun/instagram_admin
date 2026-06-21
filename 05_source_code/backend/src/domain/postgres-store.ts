@@ -964,7 +964,7 @@ export const store = {
         select id, instagram_account_id, facebook_page_id, account_name,
           page_name, status, token_expires_at, permissions, last_checked_at
         from instagram_accounts
-        order by created_at asc
+        order by updated_at desc, created_at desc
         limit 1
       `,
     );
